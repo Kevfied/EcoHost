@@ -21,30 +21,14 @@ from pydantic import BaseModel, Field
 
 # Authentication imports
 from auth import (
-    init_auth,
-    UserRole,
-    User,
-    UserResponse,
-    UserCreate,
-    UserLogin,
-    TokenData,
-    ChangePasswordRequest,
-    get_user_by_username,
-    get_user_by_id,
-    get_all_users,
-    save_user,
-    delete_user_by_id,
-    verify_password,
-    hash_password,
-    validate_password_strength,
-    create_access_token,
-    verify_token,
-    has_permission,
-    update_last_login,
-    is_rate_limited,
-    record_failed_attempt,
-    clear_failed_attempts,
-    ACCESS_TOKEN_EXPIRE_MINUTES,
+    init_auth, init_auth_db, create_default_admin, get_all_users, get_user_by_username,
+    get_user_by_id, save_user, delete_user_by_id, update_last_login,
+    verify_password, hash_password, create_access_token, verify_token,
+    require_auth, require_admin, require_moderator, require_permission,
+    User, UserResponse, UserCreate, UserLogin, UserRegister, ChangePasswordRequest,
+    UserRole, PERMISSIONS, is_rate_limited, record_failed_attempt,
+    clear_failed_attempts, is_api_rate_limited, record_api_request,
+    ACCESS_TOKEN_EXPIRE_MINUTES, validate_password_strength, has_permission
 )
 
 # Module imports
@@ -77,7 +61,7 @@ from Modules.player_sessions import (
     record_server_stop, get_total_uptime
 )
 from Modules.player_data import (
-    player_data_cache, PLAYER_DATA_CACHE_TTL,
+    PLAYER_DATA_CACHE_TTL,
     query_minecraft_player_data, SimpleNBTParser,
     parse_nbt_inventory, read_offline_player_data,
     has_following_entity_data, is_offline_response,
@@ -350,6 +334,13 @@ async def require_moderator(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+async def require_player_management(user: User = Depends(get_current_user)) -> User:
+    """Require player management permission (moderator or admin)."""
+    if not has_permission(user.role, "player_management"):
+        raise HTTPException(status_code=403, detail="Player management permission required")
+    return user
+
+
 async def require_server_start(user: User = Depends(get_current_user)) -> User:
     """Require permission to start server."""
     if not has_permission(user.role, "server_start"):
@@ -357,7 +348,7 @@ async def require_server_start(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-async def require_permission(permission: str):
+def require_permission(permission: str):
     """Factory for permission-based dependency."""
     async def checker(user: User = Depends(get_current_user)) -> User:
         if not has_permission(user.role, permission):
@@ -479,6 +470,70 @@ async def login(request: Request, login_data: UserLogin):
     )
     
     logger.info(f"[Auth] User '{user.username}' logged in from {client_ip}")
+    return response
+
+
+@app.post("/auth/register")
+async def register(request: Request, register_data: UserRegister):
+    """Register a new user account with default Viewer role."""
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check rate limiting
+    is_limited, remaining = is_rate_limited(client_ip)
+    if is_limited:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many attempts. Try again in {remaining} seconds."
+        )
+    
+    # Check if username already exists
+    existing_user = get_user_by_username(register_data.username)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    # Create new user with Viewer role
+    password_hash = hash_password(register_data.password)
+    new_user = User(
+        id=str(uuid.uuid4()),
+        username=register_data.username.lower(),
+        password_hash=password_hash,
+        role=UserRole.VIEWER,
+        created_at=time.time(),
+        last_login=None,
+        is_active=True,
+        require_password_change=False,
+    )
+    
+    save_user(new_user)
+    logger.info(f"[Auth] New user registered: {register_data.username} from {client_ip}")
+    
+    # Auto-login after registration
+    access_token = create_access_token(
+        data={
+            "sub": new_user.id,
+            "username": new_user.username,
+            "role": new_user.role.value,
+        }
+    )
+    
+    # Set cookie and return response
+    response = JSONResponse({
+        "success": True,
+        "message": "Account created successfully",
+        "user": {
+            "id": new_user.id,
+            "username": new_user.username,
+            "role": new_user.role.value,
+        }
+    })
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,  # Set to True in production with HTTPS
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
     return response
 
 
@@ -753,8 +808,21 @@ async def get_console_status(current_user: User = require_auth()):
 
 
 @app.post("/power/start", response_model=PowerResponse)
-async def start_server(current_user: User = Depends(require_server_start)):
+async def start_server(request: Request, current_user: User = Depends(require_server_start)):
     """Start the Minecraft server in a visible CMD window."""
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check API rate limiting
+    is_limited, remaining = is_api_rate_limited(client_ip)
+    if is_limited:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many requests. Try again in {remaining} seconds."
+        )
+    
+    # Record this request
+    record_api_request(client_ip)
+    
     global server_status
 
     if server_status.state != ServerState.IDLE:
@@ -809,8 +877,21 @@ async def start_server(current_user: User = Depends(require_server_start)):
 
 
 @app.post("/power/stop", response_model=PowerResponse)
-async def stop_server(current_user: User = Depends(require_moderator)):
+async def stop_server(request: Request, current_user: User = Depends(require_permission("server_stop"))):
     """Stop the Minecraft server via window control."""
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check API rate limiting
+    is_limited, remaining = is_api_rate_limited(client_ip)
+    if is_limited:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many requests. Try again in {remaining} seconds."
+        )
+    
+    # Record this request
+    record_api_request(client_ip)
+    
     global server_status, server_hung
 
     if server_status.state == ServerState.IDLE:
@@ -894,7 +975,7 @@ async def set_power_mode(request: PowerModeRequest):
 @app.post("/console/command")
 async def execute_console_command(
     request: ConsoleCommandRequest,
-    current_user: User = Depends(require_moderator)
+    current_user: User = Depends(require_permission("console_command"))
 ):
     """Execute a command in the Minecraft server console."""
     if server_status.state != ServerState.ACTIVE:
@@ -958,7 +1039,7 @@ async def get_settings(current_user: User = require_auth()):
 @app.put("/settings")
 async def update_settings(
     settings: SettingsUpdate,
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_permission("change_settings"))
 ):
     """Update application settings."""
     global app_settings
@@ -1208,8 +1289,21 @@ async def get_resource_history(
 
 
 @app.get("/players/stats", response_model=PlayerStatsResponse)
-async def get_player_statistics_endpoint(current_user: User = require_auth()):
+async def get_player_statistics_endpoint(request: Request, current_user: User = Depends(require_auth)):
     """Get all player statistics and history."""
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check API rate limiting
+    is_limited, remaining = is_api_rate_limited(client_ip)
+    if is_limited:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many requests. Try again in {remaining} seconds."
+        )
+    
+    # Record this request
+    record_api_request(client_ip)
+    
     try:
         stats = []
         current_time = time.time()
@@ -1265,13 +1359,32 @@ async def get_player_statistics_endpoint(current_user: User = require_auth()):
 
 
 @app.get("/players/{username}/data", response_model=PlayerDataResponse)
-async def get_player_data(username: str, current_user: User = Depends(require_auth)):
+async def get_player_data(username: str, request: Request, current_user: User = Depends(require_auth)):
     """Get detailed player data (inventory, gamemode, health, level, etc.)"""
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check API rate limiting
+    is_limited, remaining = is_api_rate_limited(client_ip)
+    if is_limited:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many requests. Try again in {remaining} seconds."
+        )
+    
+    # Record this request
+    record_api_request(client_ip)
+    
     try:
         cache_key = username.lower()
         now = time.time()
-        if cache_key in player_data_cache:
-            cached_time, cached_data = player_data_cache[cache_key]
+        
+        # Use a per-request cache dictionary instead of global
+        # This prevents cache pollution between different users
+        if not hasattr(get_player_data, 'cache'):
+            get_player_data.cache = {}
+        
+        if cache_key in get_player_data.cache:
+            cached_time, cached_data = get_player_data.cache[cache_key]
             if now - cached_time < PLAYER_DATA_CACHE_TTL:
                 return PlayerDataResponse(
                     success=True,
@@ -1291,7 +1404,7 @@ async def get_player_data(username: str, current_user: User = Depends(require_au
                 message=data["error"]
             )
         
-        player_data_cache[cache_key] = (now, data)
+        get_player_data.cache[cache_key] = (now, data)
         
         return PlayerDataResponse(
             success=True,
@@ -1314,7 +1427,7 @@ async def get_player_data(username: str, current_user: User = Depends(require_au
 async def set_player_gamemode(
     username: str,
     gamemode: str,
-    current_user: User = Depends(require_moderator)
+    current_user: User = Depends(require_player_management)
 ):
     """Change player gamemode."""
     try:

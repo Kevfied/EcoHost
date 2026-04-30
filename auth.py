@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from pathlib import Path
+from fastapi import HTTPException, Request, Depends
 
 # =============================================================================
 # Configuration
@@ -32,6 +33,11 @@ failed_attempts: dict[str, list[float]] = {}  # IP -> list of timestamps
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
 
+# API rate limiting for critical endpoints
+api_rate_limits: dict[str, list[float]] = {}  # IP -> list of timestamps
+API_RATE_LIMIT_REQUESTS = 10  # Max requests per window
+API_RATE_LIMIT_WINDOW = 5  # Seconds per window
+
 # =============================================================================
 # Enums & Models
 # =============================================================================
@@ -40,6 +46,7 @@ class UserRole(str, Enum):
     ADMIN = "admin"
     MODERATOR = "moderator"
     VIEWER = "viewer"
+    VIEWER_PLUS = "viewer_plus"
 
 
 class User(BaseModel):
@@ -74,6 +81,11 @@ class UserLogin(BaseModel):
     password: str
 
 
+class UserRegister(BaseModel):
+    username: str = Field(..., min_length=3, max_length=32)
+    password: str = Field(..., min_length=8)
+
+
 class TokenData(BaseModel):
     user_id: Optional[str] = None
     username: Optional[str] = None
@@ -91,26 +103,38 @@ class ChangePasswordRequest(BaseModel):
 
 PERMISSIONS = {
     UserRole.ADMIN: {
-        "server_start_stop",
+        "server_start",
+        "server_stop",
         "console_command",
         "view_dashboard",
         "view_players",
-        "view_logs",
+        "view_server_logs",
+        "view_ecohost_logs",
         "change_settings",
         "user_management",
         "power_mode_control",
+        "player_management",
     },
     UserRole.MODERATOR: {
-        "server_start_stop",
+        "server_start",
+        "server_stop",
         "console_command",
         "view_dashboard",
         "view_players",
-        "view_logs",
+        "view_server_logs",
+        "view_ecohost_logs",
+        "player_management",
+    },
+    UserRole.VIEWER_PLUS: {
+        "server_start",
+        "view_dashboard",
+        "view_players",
+        "view_server_logs",
     },
     UserRole.VIEWER: {
         "view_dashboard",
         "view_players",
-        "view_logs",
+        "view_server_logs",
     },
 }
 
@@ -118,6 +142,56 @@ PERMISSIONS = {
 def has_permission(role: UserRole, permission: str) -> bool:
     """Check if a role has a specific permission."""
     return permission in PERMISSIONS.get(role, set())
+
+
+# =============================================================================
+# FastAPI Dependencies
+# =============================================================================
+
+def require_auth():
+    """Dependency to require authentication."""
+    async def dependency(request: Request) -> User:
+        token = request.cookies.get("access_token")
+        if not token:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
+        token_data = verify_token(token)
+        if not token_data:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user = get_user_by_id(token_data.user_id)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="User not found or inactive")
+        
+        return user
+    return dependency
+
+
+def require_admin():
+    """Dependency to require admin role."""
+    async def dependency(current_user: User = Depends(require_auth())) -> User:
+        if current_user.role != UserRole.ADMIN:
+            raise HTTPException(status_code=403, detail="Admin access required")
+        return current_user
+    return dependency
+
+
+def require_moderator():
+    """Dependency to require moderator or admin role."""
+    async def dependency(current_user: User = Depends(require_auth())) -> User:
+        if current_user.role not in [UserRole.ADMIN, UserRole.MODERATOR]:
+            raise HTTPException(status_code=403, detail="Moderator access required")
+        return current_user
+    return dependency
+
+
+def require_permission(permission: str):
+    """Dependency to require a specific permission."""
+    async def dependency(current_user: User = Depends(require_auth())) -> User:
+        if not has_permission(current_user.role, permission):
+            raise HTTPException(status_code=403, detail=f"Permission '{permission}' required")
+        return current_user
+    return dependency
 
 
 # =============================================================================
@@ -419,11 +493,39 @@ def is_rate_limited(client_ip: str) -> tuple[bool, int]:
 def record_failed_attempt(client_ip: str):
     """Record a failed login attempt."""
     now = time.time()
-    
     if client_ip not in failed_attempts:
         failed_attempts[client_ip] = []
-    
     failed_attempts[client_ip].append(now)
+
+
+def is_api_rate_limited(client_ip: str) -> tuple[bool, int]:
+    """
+    Check if a client IP is rate limited for API requests.
+    Returns (is_limited, remaining_seconds).
+    """
+    now = time.time()
+    cutoff = now - API_RATE_LIMIT_WINDOW
+    
+    # Clean old entries
+    if client_ip in api_rate_limits:
+        api_rate_limits[client_ip] = [
+            t for t in api_rate_limits[client_ip] if t > cutoff
+        ]
+        
+        if len(api_rate_limits[client_ip]) >= API_RATE_LIMIT_REQUESTS:
+            oldest_request = min(api_rate_limits[client_ip])
+            remaining = int((oldest_request + API_RATE_LIMIT_WINDOW) - now)
+            return True, max(0, remaining)
+    
+    return False, 0
+
+
+def record_api_request(client_ip: str):
+    """Record an API request for rate limiting."""
+    now = time.time()
+    if client_ip not in api_rate_limits:
+        api_rate_limits[client_ip] = []
+    api_rate_limits[client_ip].append(now)
 
 
 def clear_failed_attempts(client_ip: str):

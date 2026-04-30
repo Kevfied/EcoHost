@@ -648,8 +648,8 @@
                             </div>
                         </div>
 
-                        <!-- Gamemode Control -->
-                        <div class="bg-slate-800/50 rounded-xl p-4">
+                        <!-- Gamemode Control (requires player_management permission) -->
+                        <div class="bg-slate-800/50 rounded-xl p-4 player-management-section">
                             <p class="text-xs text-slate-400 mb-3">Change Gamemode</p>
                             <div class="flex gap-2">
                                 <button class="gamemode-btn flex-1 py-2 px-3 rounded-lg text-sm font-medium bg-slate-700 hover:bg-slate-600 transition-colors" data-gm="survival">
@@ -697,8 +697,8 @@
                     </div>
                 </div>
 
-                <!-- Action Buttons -->
-                <div class="flex gap-2 mt-6 pt-4 border-t border-slate-700">
+                <!-- Action Buttons (requires player_management permission) -->
+                <div class="flex gap-2 mt-6 pt-4 border-t border-slate-700 player-management-section">
                     <button id="player-kick-btn" class="flex-1 py-2 px-4 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition-colors font-medium">
                         Kick Player
                     </button>
@@ -983,6 +983,7 @@
                     <label class="block text-sm text-slate-400 mb-1">Role</label>
                     <select id="new-role" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm">
                         <option value="viewer">Viewer</option>
+                        <option value="viewer_plus">Viewer Plus</option>
                         <option value="moderator">Moderator</option>
                         <option value="admin">Admin</option>
                     </select>
@@ -1033,19 +1034,21 @@
         const userRoles = {
             ADMIN: 'admin',
             MODERATOR: 'moderator',
+            VIEWER_PLUS: 'viewer_plus',
             VIEWER: 'viewer'
         };
 
         // Role-based permissions
-        const permissions = {
-            [userRoles.ADMIN]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_logs', 'change_settings', 'user_management', 'power_mode_control'],
-            [userRoles.MODERATOR]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players'],  // Minecraft focused, no EcoHost logs/settings
-            [userRoles.VIEWER]: ['server_start', 'view_dashboard']  // Can START but NOT stop, console, or logs
+        const rolePermissions = {
+            [userRoles.ADMIN]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'change_settings', 'user_management', 'power_mode_control', 'player_management'],
+            [userRoles.MODERATOR]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'player_management'],
+            [userRoles.VIEWER_PLUS]: ['server_start', 'view_dashboard', 'view_players', 'view_server_logs'],
+            [userRoles.VIEWER]: ['view_dashboard', 'view_players', 'view_server_logs']
         };
 
         function hasPermission(permission) {
             if (!currentUser) return false;
-            return permissions[currentUser.role]?.includes(permission) || false;
+            return rolePermissions[currentUser.role]?.includes(permission) || false;
         }
 
         function isAdmin() {
@@ -1093,6 +1096,7 @@
             const roleColors = {
                 [userRoles.ADMIN]: 'bg-orange-500/20 text-orange-400',
                 [userRoles.MODERATOR]: 'bg-blue-500/20 text-blue-400',
+                [userRoles.VIEWER_PLUS]: 'bg-emerald-500/20 text-emerald-400',
                 [userRoles.VIEWER]: 'bg-slate-500/20 text-slate-400'
             };
             roleEl.className = `text-xs px-2 py-0.5 rounded-full ${roleColors[currentUser.role] || 'bg-slate-700 text-slate-300'}`;
@@ -1114,8 +1118,8 @@
                 if (settingsNav) settingsNav.style.display = 'none';
             }
 
-            // Hide server logs section on dashboard for viewers (no view_logs permission)
-            if (!hasPermission('view_logs')) {
+            // Hide server logs section on dashboard for users without view_server_logs permission
+            if (!hasPermission('view_server_logs')) {
                 // Find the Server Logs card on dashboard (it's a glass-card containing "Server Logs" h3)
                 const dashboardPage = document.getElementById('page-dashboard');
                 if (dashboardPage) {
@@ -1134,13 +1138,13 @@
                 const playersNav = document.querySelector('[data-page="players"]');
                 if (playersNav) playersNav.style.display = 'none';
             }
-            if (!hasPermission('view_logs')) {  // Using view_logs for Resources page too
+            if (!hasPermission('view_server_logs')) {  // Using view_server_logs for Resources page too
                 const resourcesNav = document.querySelector('[data-page="resources"]');
                 if (resourcesNav) resourcesNav.style.display = 'none';
             }
 
-            // Hide EcoHost Logs section on Console page for users without view_logs permission
-            if (!hasPermission('view_logs')) {
+            // Hide EcoHost Logs section on Console page for users without view_ecohost_logs permission
+            if (!hasPermission('view_ecohost_logs')) {
                 const consolePage = document.getElementById('page-console');
                 if (consolePage) {
                     const allCards = consolePage.querySelectorAll('.glass-card');
@@ -1174,6 +1178,13 @@
                     if (!el.id?.includes('manual') && !el.id?.includes('power')) {
                         el.disabled = true;
                     }
+                });
+            }
+
+            // Hide player management sections for users without player_management permission
+            if (!hasPermission('player_management')) {
+                document.querySelectorAll('.player-management-section').forEach(el => {
+                    el.style.display = 'none';
                 });
             }
 
@@ -1663,8 +1674,22 @@
         
         let allPlayers = [];
         let currentPlayerModal = null;
+        let currentPlayerData = null;
+        let activeRequestUsername = null;  // Track which player's data is currently being fetched
 
         async function fetchPlayerStats() {
+            const container = document.getElementById('players-list');
+            // Show loading state
+            container.innerHTML = `
+                <div class="text-center py-12 text-slate-500">
+                    <svg class="w-12 h-12 mx-auto mb-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2"/>
+                    </svg>
+                    <p>Loading players...</p>
+                </div>
+            `;
+            
             try {
                 const response = await fetch('/players/stats', {
                     credentials: 'same-origin'
@@ -1678,6 +1703,14 @@
                 }
             } catch (e) {
                 console.error('Failed to fetch player stats:', e);
+                container.innerHTML = `
+                    <div class="text-center py-12 text-slate-500">
+                        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <p>Failed to load players</p>
+                    </div>
+                `;
             }
         }
 
@@ -1803,13 +1836,9 @@
             modal.classList.remove('hidden');
             modal.classList.add('flex');
             
-            // Fetch live data if player is online
-            if (player.is_online) {
-                console.log(`[DEBUG] Player is online, fetching live data for: ${player.username}`);
-                fetchPlayerLiveData(player.username);
-            } else {
-                console.log(`[DEBUG] Player is offline, not fetching live data`);
-            }
+            // Fetch player data (works for both online and offline players)
+            console.log(`[DEBUG] Fetching player data for: ${player.username} (online: ${player.is_online})`);
+            fetchPlayerLiveData(player.username);
         }
 
         function closePlayerModal() {
@@ -1878,7 +1907,6 @@
         // Player Modal - Tabs & Data
         // =============================================================================
         
-        let currentPlayerData = null;
         let playerModalInterval = null;
         let playerHistoryInterval = null;
 
@@ -1940,6 +1968,41 @@
 
         async function fetchPlayerLiveData(username) {
             console.log(`[DEBUG] Fetching live data for player: ${username}`);
+            
+            // Store the request username to check against when response arrives
+            const requestUsername = username;
+            activeRequestUsername = username;
+            
+            // Show loading states
+            const loadingEl = document.getElementById('live-stats-loading');
+            const invLoadingEl = document.getElementById('inventory-loading');
+            const contentEl = document.getElementById('live-stats-content');
+            const invContentEl = document.getElementById('inventory-content');
+            
+            loadingEl.innerHTML = `
+                <div class="text-center py-4">
+                    <svg class="w-8 h-8 mx-auto mb-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2"/>
+                    </svg>
+                    <p class="text-slate-400 text-sm">Loading stats...</p>
+                </div>
+            `;
+            loadingEl.classList.remove('hidden');
+            contentEl.classList.add('hidden');
+            
+            invLoadingEl.innerHTML = `
+                <div class="text-center py-4">
+                    <svg class="w-8 h-8 mx-auto mb-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2"/>
+                    </svg>
+                    <p class="text-slate-400 text-sm">Loading inventory...</p>
+                </div>
+            `;
+            invLoadingEl.classList.remove('hidden');
+            invContentEl.classList.add('hidden');
+            
             try {
                 const response = await fetch(`/players/${username}/data`, {
                     credentials: 'same-origin'
@@ -1948,31 +2011,96 @@
                 const data = await response.json();
                 console.log(`[DEBUG] Response data:`, data);
                 
+                // Check if this response is still relevant (modal hasn't switched to another player)
+                if (!currentPlayerModal || currentPlayerModal.username !== requestUsername || activeRequestUsername !== requestUsername) {
+                    console.log(`[DEBUG] Ignoring stale response for ${requestUsername}, current player is ${currentPlayerModal?.username}, active request is ${activeRequestUsername}`);
+                    return;
+                }
+                
                 if (data.success) {
                     console.log(`[DEBUG] Player data received successfully:`, data.data);
                     currentPlayerData = data.data;
                     renderPlayerLiveData(data.data);
                 } else {
                     console.log(`[DEBUG] Player data fetch failed:`, data.message);
+                    loadingEl.innerHTML = `<p class="text-red-400 text-sm">Failed to load data</p>`;
+                    invLoadingEl.innerHTML = `<p class="text-red-400 text-sm">Failed to load inventory</p>`;
                 }
             } catch (e) {
+                // Check if this error is still relevant
+                if (!currentPlayerModal || currentPlayerModal.username !== requestUsername || activeRequestUsername !== requestUsername) {
+                    console.log(`[DEBUG] Ignoring stale error for ${requestUsername}, current player is ${currentPlayerModal?.username}, active request is ${activeRequestUsername}`);
+                    return;
+                }
                 console.error('[DEBUG] Failed to fetch player data:', e);
+                loadingEl.innerHTML = `<p class="text-red-400 text-sm">Failed to load data</p>`;
+                invLoadingEl.innerHTML = `<p class="text-red-400 text-sm">Failed to load inventory</p>`;
+            } finally {
+                // Clear the active request tracking
+                if (activeRequestUsername === requestUsername) {
+                    activeRequestUsername = null;
+                }
             }
         }
 
         function renderPlayerLiveData(data) {
             console.log(`[DEBUG] Rendering player data:`, data);
             console.log(`[DEBUG] Player online status:`, data.online);
+            console.log(`[DEBUG] Data source:`, data.source);
             
-            // Handle offline players - show session history instead of live stats
+            // Handle offline players - show data from file if available
             if (!data.online) {
-                console.log(`[DEBUG] Player is offline, showing offline message`);
+                console.log(`[DEBUG] Player is offline, checking for file data`);
                 const loadingEl = document.getElementById('live-stats-loading');
                 const contentEl = document.getElementById('live-stats-content');
                 const invLoadingEl = document.getElementById('inventory-loading');
                 const invContentEl = document.getElementById('inventory-content');
                 
-                // Check if we have session history
+                // If we have data from file (nbtlib_file), show it
+                if (data.source === 'nbtlib_file' || data.source === 'playerdata_file') {
+                    console.log(`[DEBUG] Showing offline player data from file`);
+                    // Show stats and inventory from file
+                    loadingEl.classList.add('hidden');
+                    contentEl.classList.remove('hidden');
+                    invLoadingEl.classList.add('hidden');
+                    invContentEl.classList.remove('hidden');
+                    
+                    // Update stats with offline indicator
+                    const gmBadge = document.getElementById('player-modal-gamemode');
+                    if (data.gamemode) {
+                        gmBadge.textContent = data.gamemode.toUpperCase();
+                        gmBadge.classList.remove('hidden');
+                    } else {
+                        gmBadge.classList.add('hidden');
+                    }
+                    
+                    // Render inventory
+                    renderInventory(data.inventory || []);
+                    
+                    // Update health/food bars (from saved file data)
+                    if (data.health !== undefined) {
+                        const healthPercent = (data.health / 20) * 100;
+                        document.getElementById('health-bar').style.width = `${healthPercent}%`;
+                        document.getElementById('health-text').textContent = `${Math.round(data.health)}/20`;
+                    }
+                    if (data.food !== undefined) {
+                        const foodPercent = (data.food / 20) * 100;
+                        document.getElementById('food-bar').style.width = `${foodPercent}%`;
+                        document.getElementById('food-text').textContent = `${data.food}/20`;
+                    }
+                    
+                    // Add offline indicator
+                    const statusBadge = document.getElementById('player-modal-status');
+                    statusBadge.innerHTML = `
+                        <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+                        Offline (Saved Data)
+                    `;
+                    statusBadge.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium bg-slate-700 text-slate-300';
+                    
+                    return;
+                }
+                
+                // No file data available, show session history
                 if (data.session_history) {
                     loadingEl.innerHTML = `
                         <div class="text-center py-4">
@@ -2506,6 +2634,7 @@
                 const roleColors = {
                     'admin': 'text-orange-400',
                     'moderator': 'text-blue-400',
+                    'viewer_plus': 'text-emerald-400',
                     'viewer': 'text-slate-400'
                 };
                 
@@ -2654,7 +2783,7 @@
         };
 
         window.changeUserRole = async (userId, currentRole) => {
-            const roles = ['admin', 'moderator', 'viewer'];
+            const roles = ['admin', 'moderator', 'viewer_plus', 'viewer'];
             const newRole = prompt(`Enter new role (${roles.join(', ')}):`, currentRole);
             
             if (!newRole || newRole === currentRole) return;

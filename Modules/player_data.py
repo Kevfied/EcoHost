@@ -18,8 +18,7 @@ from .player_sessions import player_sessions
 
 logger = logging.getLogger(__name__)
 
-# Cache for player data queries (to avoid spamming commands)
-player_data_cache = {}
+# Cache TTL configuration
 PLAYER_DATA_CACHE_TTL = 5  # seconds
 
 # Window automation availability
@@ -1019,30 +1018,41 @@ async def query_minecraft_player_data(username: str) -> dict:
         "fallback_reason": None
     }
     
-    # Try file-based method first (most reliable)
-    if server_status.state == ServerState.ACTIVE:
-        try:
-            # Force server to save player data to disk
+    # Try file-based method first (most reliable, works for both online and offline)
+    try:
+        # Check if the specific player is online
+        is_player_online = False
+        if server_status.state == ServerState.ACTIVE and hasattr(server_status, 'players'):
+            for player in server_status.players:
+                if hasattr(player, 'username') and player.username.lower() == username.lower():
+                    is_player_online = True
+                    break
+        
+        # Only trigger save-all flush if the player is actually online
+        if is_player_online:
             from .commands import execute_command
-            logger.info(f"[PlayerData] Triggering save-all flush for {username}")
+            logger.info(f"[PlayerData] Player {username} is online, triggering save-all flush")
             await execute_command("save-all flush")
             time.sleep(0.5)  # Allow OS to complete write operation
-            
-            # Read from file
-            logger.info(f"[PlayerData] Attempting to read playerdata file for {username}")
-            file_data = read_playerdata_file_nbtlib(username)
-            if file_data:
-                logger.info(f"[PlayerData] Successfully read playerdata file, converting to API format")
-                player_data = convert_nbtlib_to_api_format(username, file_data)
-                player_data["source"] = "nbtlib_file"
-                player_data["online"] = True
-                logger.info(f"[PlayerData] Retrieved data via nbtlib for {username}: {len(player_data.get('inventory', []))} items")
-                return player_data
-            else:
-                logger.warning(f"[PlayerData] Failed to read playerdata file for {username}, falling back to RCON")
-        except Exception as e:
-            logger.warning(f"[PlayerData] File-based method failed: {e}")
-            logger.exception("[PlayerData] Full traceback:")
+        else:
+            logger.info(f"[PlayerData] Player {username} is offline, reading saved .dat file directly")
+        
+        # Read from file (works even if server is offline)
+        logger.info(f"[PlayerData] Attempting to read playerdata file for {username}")
+        file_data = read_playerdata_file_nbtlib(username)
+        if file_data:
+            logger.info(f"[PlayerData] Successfully read playerdata file, converting to API format")
+            player_data = convert_nbtlib_to_api_format(username, file_data)
+            player_data["source"] = "nbtlib_file"
+            # Set online status based on actual player presence
+            player_data["online"] = is_player_online
+            logger.info(f"[PlayerData] Retrieved data via nbtlib for {username}: {len(player_data.get('inventory', []))} items, online={player_data['online']}")
+            return player_data
+        else:
+            logger.warning(f"[PlayerData] Failed to read playerdata file for {username}, falling back to RCON")
+    except Exception as e:
+        logger.warning(f"[PlayerData] File-based method failed: {e}")
+        logger.exception("[PlayerData] Full traceback:")
     
     # Fallback to RCON if file method fails
     if server_status.state == ServerState.ACTIVE:
