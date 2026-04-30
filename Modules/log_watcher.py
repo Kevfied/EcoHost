@@ -409,7 +409,8 @@ def log_watcher():
                             empty_server_countdown = None
                             server_status.state = ServerState.STOPPING
                             try:
-                                asyncio.run(console_controller.stop())
+                                from .commands import stop_server
+                                stop_server()
                             except Exception as e:
                                 logger.error(f"[SmartEnergy] Auto-shutdown failed: {e}")
                 else:

@@ -147,7 +147,24 @@ pause'''
             return False
 
     async def send_command(self, command: str) -> bool:
-        """Send any command to the console window using pywinauto."""
+        """Send command using RCON when available, fallback to pywinauto."""
+        # Try RCON first if enabled
+        try:
+            from .rcon_client import send_rcon_command, is_rcon_available
+            if is_rcon_available():
+                logger.info(f"[RCON] Sending command: {command}")
+                response = send_rcon_command(command)
+                if response is not None:
+                    logger.info(f"[RCON] Command sent successfully")
+                    return True
+                else:
+                    logger.warning("[RCON] Failed to send command, falling back to pywinauto")
+        except ImportError:
+            logger.debug("[RCON] RCON client not available, using pywinauto")
+        except Exception as e:
+            logger.warning(f"[RCON] Error: {e}, falling back to pywinauto")
+        
+        # Fallback to pywinauto
         if not PYWINAUTO_AVAILABLE:
             logger.error("[GhostConsole] pywinauto not available")
             return False

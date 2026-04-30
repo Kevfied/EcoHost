@@ -11,8 +11,8 @@ from pathlib import Path
 
 import logging
 
-from .config import SERVER_DIR
-from .models import ServerState, server_status, log_lines, log_lock
+from .config import SERVER_DIR, CONFIG_FILE
+from .models import ServerState, server_status, log_lines, log_lock, PlayerDataResponse
 from .server_control import console_controller
 from .player_sessions import player_sessions
 
@@ -58,7 +58,14 @@ class SimpleNBTParser:
                 
                 name_len = struct.unpack('>H', data[offset[0]:offset[0]+2])[0]
                 offset[0] += 2
-                name = data[offset[0]:offset[0]+name_len].decode('utf-8')
+                try:
+                    name = data[offset[0]:offset[0]+name_len].decode('utf-8')
+                except UnicodeDecodeError:
+                    # Handle corrupted or binary data in tag names
+                    try:
+                        name = data[offset[0]:offset[0]+name_len].decode('utf-8', errors='replace')
+                    except Exception:
+                        name = data[offset[0]:offset[0]+name_len].hex()
                 offset[0] += name_len
                 
                 if tag_type == 1:
@@ -87,7 +94,16 @@ class SimpleNBTParser:
                 elif tag_type == 8:
                     str_len = struct.unpack('>H', data[offset[0]:offset[0]+2])[0]
                     offset[0] += 2
-                    value = data[offset[0]:offset[0]+str_len].decode('utf-8')
+                    try:
+                        value = data[offset[0]:offset[0]+str_len].decode('utf-8')
+                    except UnicodeDecodeError:
+                        # Handle corrupted or binary data in strings
+                        try:
+                            # Try with error handling
+                            value = data[offset[0]:offset[0]+str_len].decode('utf-8', errors='replace')
+                        except Exception:
+                            # If still fails, use hex representation
+                            value = data[offset[0]:offset[0]+str_len].hex()
                     offset[0] += str_len
                 elif tag_type == 9:
                     list_type = data[offset[0]]
@@ -142,8 +158,13 @@ class SimpleNBTParser:
             
             return result
             
+        except UnicodeDecodeError as e:
+            logger.error(f"[NBT] UTF-8 decoding error in playerdat: {e}")
+            logger.debug(f"[NBT] Error position: {e.start}, data sample: {data[e.start-10:e.start+10].hex() if e.start > 10 else data[:20].hex()}")
+            return {}
         except Exception as e:
             logger.error(f"[NBT] Failed to parse playerdat: {e}")
+            logger.debug(f"[NBT] Data length: {len(data)}, first 50 bytes: {data[:50].hex()}")
             return {}
 
 
@@ -303,6 +324,599 @@ def is_offline_response(line: str, username: str, escaped_name: str) -> bool:
     return False
 
 
+def parse_nbt_compound_list(content: str) -> list:
+    """
+    Parse a list of NBT compound tags from inventory content.
+    Handles nested structures and various NBT formats reliably.
+    """
+    items = []
+    if not content or content.strip() == '':
+        return items
+    
+    # Parse individual compound items using stack-based brace tracking
+    i = 0
+    content_len = len(content)
+    
+    while i < content_len:
+        # Skip whitespace and commas between items
+        while i < content_len and content[i] in ' \t\n\r,':
+            i += 1
+        
+        if i >= content_len:
+            break
+        
+        # Look for start of compound tag
+        if content[i] != '{':
+            i += 1
+            continue
+        
+        # Found a compound start, find its matching end using stack
+        start_idx = i
+        brace_stack = 1
+        i += 1
+        in_string = False
+        string_char = None
+        
+        while i < content_len and brace_stack > 0:
+            char = content[i]
+            
+            if not in_string:
+                if char in '"\'':
+                    in_string = True
+                    string_char = char
+                elif char == '{':
+                    brace_stack += 1
+                elif char == '}':
+                    brace_stack -= 1
+            else:
+                # In string, look for closing quote (handle escapes)
+                if char == '\\' and i + 1 < content_len:
+                    i += 1  # Skip escaped character
+                elif char == string_char:
+                    in_string = False
+                    string_char = None
+            
+            i += 1
+        
+        if brace_stack == 0:
+            # Successfully found a complete compound tag
+            compound_str = content[start_idx:i]
+            item = parse_nbt_item(compound_str)
+            if item:
+                items.append(item)
+    
+    return items
+
+
+def parse_nbt_item(compound_str: str) -> dict:
+    """
+    Parse a single NBT compound item string into slot/id/count dict.
+    Handles various NBT number formats and nested tags.
+    """
+    # Extract Slot - handles formats: Slot: 0, Slot: 0b, Slot: 0s
+    slot_match = re.search(r'Slot:\s*(-?\d+)[bsl]?', compound_str)
+    if not slot_match:
+        logger.debug(f"[PlayerData] Skipping item without Slot: {compound_str[:100]}...")
+        return None
+    
+    slot = int(slot_match.group(1))
+    
+    # Extract id - handles formats: id: "minecraft:stone", id: "stone"
+    id_match = re.search(r'id:\s*"([^"]+)"', compound_str)
+    if not id_match:
+        logger.debug(f"[PlayerData] Skipping item without id: {compound_str[:100]}...")
+        return None
+    
+    item_id = id_match.group(1)
+    # Remove minecraft: prefix if present
+    if item_id.startswith('minecraft:'):
+        item_id = item_id[10:]
+    
+    # Extract Count - handles formats: Count: 1, Count: 1b, Count: 1s
+    # Default to 1 if not found
+    count_match = re.search(r'Count:\s*(\d+)[bsl]?', compound_str)
+    count = int(count_match.group(1)) if count_match else 1
+    
+    logger.debug(f"[PlayerData] Parsed NBT item: slot={slot}, id={item_id}, count={count}")
+    
+    return {
+        "slot": slot,
+        "id": item_id,
+        "count": count
+    }
+
+
+def convert_filedata_to_api_format(username: str, file_data: dict) -> dict:
+    """
+    Convert NBT data from playerdata file to API format.
+    
+    Args:
+        username: Player username
+        file_data: Raw NBT data from SimpleNBTParser
+        
+    Returns:
+        Dictionary in API format with username, online, gamemode, inventory, etc.
+    """
+    api_data = {
+        "username": username,
+        "online": True,
+        "gamemode": None,
+        "level": 0,
+        "xp": 0,
+        "health": 20,
+        "food": 20,
+        "inventory": [],
+        "position": {"x": 0, "y": 0, "z": 0},
+        "dimension": "minecraft:overworld",
+        "source": "playerdata_file",
+        "error": None
+    }
+    
+    try:
+        # Extract gamemode
+        if "playerGameType" in file_data:
+            gm_map = {0: "survival", 1: "creative", 2: "adventure", 3: "spectator"}
+            api_data["gamemode"] = gm_map.get(file_data["playerGameType"], "unknown")
+        
+        # Extract level
+        if "XpLevel" in file_data:
+            api_data["level"] = file_data["XpLevel"]
+        
+        # Extract health
+        if "Health" in file_data:
+            api_data["health"] = float(file_data["Health"])
+        
+        # Extract food
+        if "foodLevel" in file_data:
+            api_data["food"] = file_data["foodLevel"]
+        
+        # Extract position
+        if "Pos" in file_data and isinstance(file_data["Pos"], list) and len(file_data["Pos"]) >= 3:
+            api_data["position"] = {
+                "x": round(float(file_data["Pos"][0]), 1),
+                "y": round(float(file_data["Pos"][1]), 1),
+                "z": round(float(file_data["Pos"][2]), 1)
+            }
+        
+        # Extract dimension
+        if "Dimension" in file_data:
+            api_data["dimension"] = file_data["Dimension"]
+        
+        # Extract inventory
+        if "Inventory" in file_data and isinstance(file_data["Inventory"], list):
+            inv_items = []
+            for item in file_data["Inventory"]:
+                if isinstance(item, dict):
+                    slot = item.get("Slot", 0)
+                    item_id = item.get("id", "")
+                    if item_id.startswith("minecraft:"):
+                        item_id = item_id[10:]
+                    count = item.get("Count", 1)
+                    
+                    if item_id:  # Only add if we have an ID
+                        inv_items.append({
+                            "slot": slot,
+                            "id": item_id,
+                            "count": count
+                        })
+            
+            api_data["inventory"] = inv_items
+            logger.debug(f"[PlayerData] Converted {len(inv_items)} inventory items from file")
+        
+    except Exception as e:
+        logger.error(f"[PlayerData] Failed to convert filedata to API format: {e}")
+    
+    return api_data
+
+
+def get_player_uuid(username: str) -> str:
+    """
+    Get player UUID from various sources.
+    
+    Args:
+        username: Player username
+        
+    Returns:
+        UUID string or None if not found
+    """
+    try:
+        # Try usercache.json first (most reliable) - it's in SERVER_DIR, not world folder
+        usercache_path = SERVER_DIR / "usercache.json"
+        if usercache_path.exists():
+            import json
+            with open(usercache_path, 'r') as f:
+                data = json.load(f)
+                for entry in data:
+                    if entry.get('name') == username:
+                        player_uuid = entry.get('uuid')
+                        logger.info(f"[PlayerData] Found UUID in usercache.json for {username}: {player_uuid}")
+                        return player_uuid
+        
+        # Try RCON query as fallback
+        if server_status.state == ServerState.ACTIVE:
+            from .commands import send_rcon_command
+            response = send_rcon_command(f"data get entity {username} UUID")
+            logger.debug(f"[PlayerData] UUID RCON response: {response}")
+            if response:
+                import re
+                # Handle format: [I; 68264093, -724878668, -1170139508, -987008962]
+                uuid_match = re.search(r'\[I;\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\]', response)
+                if uuid_match:
+                    # Convert int array to UUID
+                    import uuid
+                    most_sig = (int(uuid_match.group(1)) << 32) | (int(uuid_match.group(2)) & 0xFFFFFFFF)
+                    least_sig = (int(uuid_match.group(3)) << 32) | (int(uuid_match.group(4)) & 0xFFFFFFFF)
+                    player_uuid = str(uuid.UUID(int=most_sig << 64 | least_sig))
+                    logger.info(f"[PlayerData] Retrieved UUID via RCON for {username}: {player_uuid}")
+                    return player_uuid
+        
+        # Try searching playerdata files
+        world_path = SERVER_DIR / "world"
+        playerdata_path = world_path / "playerdata"
+        if playerdata_path.exists():
+            for dat_file in playerdata_path.glob("*.dat"):
+                try:
+                    nbt_data = read_playerdata_file_nbtlib_raw(dat_file)
+                    if nbt_data and nbt_data.get('Name') == username:
+                        return dat_file.stem  # Return UUID from filename
+                except Exception:
+                    continue
+        
+        return None
+    except Exception as e:
+        logger.error(f"[PlayerData] Failed to get UUID for {username}: {e}")
+        return None
+
+
+def read_playerdata_file_nbtlib(username: str) -> dict:
+    """
+    Read player data using nbtlib library (most reliable method).
+    
+    Args:
+        username: Player username
+        
+    Returns:
+        NBT data dictionary or None if file not found
+    """
+    try:
+        import nbtlib
+        
+        world_path = SERVER_DIR / "world"
+        playerdata_path = world_path / "playerdata"
+        
+        logger.debug(f"[PlayerData] Checking playerdata path: {playerdata_path}")
+        if not playerdata_path.exists():
+            logger.warning(f"[PlayerData] Playerdata directory not found: {playerdata_path}")
+            return None
+        
+        # Get player UUID
+        logger.debug(f"[PlayerData] Getting UUID for {username}")
+        player_uuid = get_player_uuid(username)
+        if not player_uuid:
+            logger.warning(f"[PlayerData] Could not find UUID for {username}")
+            return None
+        
+        dat_file = playerdata_path / f"{player_uuid}.dat"
+        logger.debug(f"[PlayerData] Looking for playerdata file: {dat_file}")
+        if not dat_file.exists():
+            logger.warning(f"[PlayerData] Playerdata file not found: {dat_file}")
+            return None
+        
+        logger.info(f"[PlayerData] Reading playerdata with nbtlib: {dat_file.name}")
+        nbt_data = nbtlib.load(dat_file)
+        
+        # Convert nbtlib object to dict for easier processing
+        logger.debug(f"[PlayerData] Successfully loaded NBT data")
+        return dict(nbt_data)
+        
+    except FileNotFoundError:
+        logger.warning(f"[PlayerData] Playerdata file not found for {username}")
+        return None
+    except Exception as e:
+        logger.error(f"[PlayerData] Failed to read playerdata with nbtlib: {e}")
+        logger.exception("[PlayerData] Full traceback:")
+        return None
+
+
+def read_playerdata_file_nbtlib_raw(filepath: Path) -> dict:
+    """
+    Read a playerdata file using nbtlib (helper for UUID search).
+    
+    Args:
+        filepath: Path to .dat file
+        
+    Returns:
+        NBT data dictionary or None
+    """
+    try:
+        import nbtlib
+        nbt_data = nbtlib.load(filepath)
+        return dict(nbt_data)
+    except Exception:
+        return None
+
+
+def convert_nbtlib_to_api_format(username: str, nbt_data: dict) -> dict:
+    """
+    Convert nbtlib NBT data to API format.
+    
+    Args:
+        username: Player username
+        nbt_data: Raw NBT data from nbtlib
+        
+    Returns:
+        Dictionary in API format
+    """
+    api_data = {
+        "username": username,
+        "online": True,
+        "gamemode": None,
+        "level": 0,
+        "xp": 0,
+        "health": 20,
+        "food": 20,
+        "inventory": [],
+        "position": {"x": 0, "y": 0, "z": 0},
+        "dimension": "minecraft:overworld",
+        "source": "nbtlib_file",
+        "error": None
+    }
+    
+    try:
+        # Extract gamemode
+        if "playerGameType" in nbt_data:
+            gm_map = {0: "survival", 1: "creative", 2: "adventure", 3: "spectator"}
+            api_data["gamemode"] = gm_map.get(nbt_data["playerGameType"], "unknown")
+        
+        # Extract level
+        if "XpLevel" in nbt_data:
+            api_data["level"] = nbt_data["XpLevel"]
+        
+        # Extract health
+        if "Health" in nbt_data:
+            api_data["health"] = float(nbt_data["Health"])
+        
+        # Extract food
+        if "foodLevel" in nbt_data:
+            api_data["food"] = nbt_data["foodLevel"]
+        
+        # Extract position
+        if "Pos" in nbt_data:
+            pos = nbt_data["Pos"]
+            if isinstance(pos, list) and len(pos) >= 3:
+                api_data["position"] = {
+                    "x": round(float(pos[0]), 1),
+                    "y": round(float(pos[1]), 1),
+                    "z": round(float(pos[2]), 1)
+                }
+        
+        # Extract dimension
+        if "Dimension" in nbt_data:
+            api_data["dimension"] = str(nbt_data["Dimension"])
+        
+        # Extract inventory (main inventory)
+        if "Inventory" in nbt_data:
+            inv_items = []
+            for item in nbt_data["Inventory"]:
+                if isinstance(item, dict):
+                    slot = item.get("Slot", 0)
+                    item_id = item.get("id", "")
+                    if item_id.startswith("minecraft:"):
+                        item_id = item_id[10:]
+                    count = item.get("Count", 1)
+                    
+                    item_data = {
+                        "slot": slot,
+                        "id": item_id,
+                        "count": count
+                    }
+                    
+                    # Extract enchantments
+                    if "tag" in item and isinstance(item["tag"], dict):
+                        tag = item["tag"]
+                        
+                        # Enchantments
+                        if "Enchantments" in tag:
+                            enchantments = []
+                            for ench in tag["Enchantments"]:
+                                if isinstance(ench, dict):
+                                    ench_id = ench.get("id", "")
+                                    if ench_id.startswith("minecraft:"):
+                                        ench_id = ench_id[10:]
+                                    lvl = ench.get("lvl", 1)
+                                    enchantments.append({"id": ench_id, "lvl": lvl})
+                            if enchantments:
+                                item_data["enchantments"] = enchantments
+                        
+                        # Stored enchantments (for enchanted books)
+                        if "StoredEnchantments" in tag:
+                            stored_ench = []
+                            for ench in tag["StoredEnchantments"]:
+                                if isinstance(ench, dict):
+                                    ench_id = ench.get("id", "")
+                                    if ench_id.startswith("minecraft:"):
+                                        ench_id = ench_id[10:]
+                                    lvl = ench.get("lvl", 1)
+                                    stored_ench.append({"id": ench_id, "lvl": lvl})
+                            if stored_ench:
+                                item_data["stored_enchantments"] = stored_ench
+                        
+                        # Potion effects
+                        if "Potion" in tag:
+                            potion_type = tag["Potion"]
+                            if potion_type.startswith("minecraft:"):
+                                potion_type = potion_type[10:]
+                            item_data["potion_type"] = potion_type
+                        
+                        # Custom potion effects
+                        if "CustomPotionEffects" in tag:
+                            effects = []
+                            for effect in tag["CustomPotionEffects"]:
+                                if isinstance(effect, dict):
+                                    effect_id = effect.get("id", "")
+                                    if effect_id.startswith("minecraft:"):
+                                        effect_id = effect_id[10:]
+                                    duration = effect.get("Duration", 0)
+                                    amplifier = effect.get("Amplifier", 0)
+                                    effects.append({
+                                        "id": effect_id,
+                                        "duration": duration,
+                                        "amplifier": amplifier
+                                    })
+                            if effects:
+                                item_data["potion_effects"] = effects
+                    
+                    if item_id:
+                        inv_items.append(item_data)
+            
+            api_data["inventory"] = inv_items
+            logger.debug(f"[PlayerData] Converted {len(inv_items)} inventory items from nbtlib")
+        
+    except Exception as e:
+        logger.error(f"[PlayerData] Failed to convert nbtlib data to API format: {e}")
+    
+    return api_data
+
+
+def read_playerdata_file(username: str) -> dict:
+    """
+    Read player data directly from the Minecraft playerdata file.
+    This is the most reliable method as it bypasses RCON size limits.
+    
+    Args:
+        username: Player username
+        
+    Returns:
+        Dictionary with player data or None if file not found
+    """
+    try:
+        import gzip
+        import uuid
+        
+        # Try to find the playerdata file
+        # Minecraft stores playerdata as UUID.dat files
+        world_path = SERVER_DIR / "world"
+        playerdata_path = world_path / "playerdata"
+        
+        if not playerdata_path.exists():
+            logger.debug(f"[PlayerData] Playerdata directory not found: {playerdata_path}")
+            return None
+        
+        # Try to find the player's UUID file
+        # First, try to get UUID from online-players.json if available
+        uuid_file = world_path / "stats" / f"{username}.json"
+        player_uuid = None
+        
+        # Try common UUID mapping files
+        for mapping_file in ["usercache.json", "known_players.json"]:
+            mapping_path = world_path / mapping_file
+            if mapping_path.exists():
+                try:
+                    with open(mapping_path, 'r') as f:
+                        import json
+                        data = json.load(f)
+                        for entry in data:
+                            if entry.get('name') == username:
+                                player_uuid = entry.get('uuid')
+                                break
+                except Exception:
+                    pass
+        
+        if not player_uuid:
+            # Try direct UUID conversion (works for offline mode)
+            try:
+                from uuid import UUID
+                # Offline mode UUID generation
+                player_uuid = str(UUID('00000000-0000-0000-0000-' + str(hash(username))[:12]))
+            except Exception:
+                pass
+        
+        if player_uuid:
+            dat_file = playerdata_path / f"{player_uuid}.dat"
+            if dat_file.exists():
+                logger.info(f"[PlayerData] Reading playerdata file: {dat_file.name}")
+                return SimpleNBTParser.read_playerdat(dat_file)
+        
+        # Fallback: try to find by searching all files
+        for dat_file in playerdata_path.glob("*.dat"):
+            try:
+                data = SimpleNBTParser.read_playerdat(dat_file)
+                if data and data.get('Name') == username:
+                    logger.info(f"[PlayerData] Found playerdata file by search: {dat_file.name}")
+                    return data
+            except Exception:
+                continue
+        
+        logger.debug(f"[PlayerData] No playerdata file found for {username}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"[PlayerData] Failed to read playerdata file: {e}")
+        return None
+
+
+def parse_inventory_only(response: str) -> list:
+    """
+    Parse inventory data from a dedicated inventory query response.
+    Handles the format: 'hao333333 has the following entity data: [{...}, {...}]'
+    
+    Args:
+        response: RCON response from 'data get entity <player> Inventory' command
+        
+    Returns:
+        List of inventory items or empty list if parsing fails
+    """
+    try:
+        # Find the inventory list in the response
+        # Format: "username has the following entity data: [{...}]"
+        list_start = response.find('[')
+        if list_start == -1:
+            logger.debug("[PlayerData] No inventory list found in response")
+            return []
+        
+        # Find matching end bracket by tracking braces
+        brace_depth = 0
+        list_end = -1
+        in_string = False
+        string_char = None
+        
+        for i in range(list_start, len(response)):
+            char = response[i]
+            
+            if not in_string:
+                if char in '"\'':
+                    in_string = True
+                    string_char = char
+                elif char == '[' or char == '{':
+                    brace_depth += 1
+                elif char == ']' or char == '}':
+                    brace_depth -= 1
+                    if brace_depth == 0 and char == ']':
+                        list_end = i + 1
+                        break
+            else:
+                if char == '\\' and i + 1 < len(response):
+                    continue  # Skip escaped character
+                elif char == string_char:
+                    in_string = False
+                    string_char = None
+        
+        if list_end == -1:
+            logger.debug("[PlayerData] Could not find end of inventory list")
+            return []
+        
+        inv_content = response[list_start:list_end]
+        logger.debug(f"[PlayerData] Extracted inventory content: {inv_content[:100]}...")
+        
+        # Use the robust NBT parser
+        items = parse_nbt_compound_list(inv_content)
+        return items
+        
+    except Exception as e:
+        logger.error(f"[PlayerData] Failed to parse inventory-only response: {e}")
+        return []
+
+
 def parse_live_player_data(username: str, log_line: str) -> dict:
     """Parse player data from server log output."""
     response_data = {
@@ -316,34 +930,40 @@ def parse_live_player_data(username: str, log_line: str) -> dict:
         "inventory": [],
         "position": {"x": 0, "y": 0, "z": 0},
         "dimension": "minecraft:overworld",
-        "source": "live_query"
+        "source": "live_query",
+        "error": None
     }
     
     try:
         nbt_start = log_line.find("{")
         if nbt_start > 0:
             nbt_data = log_line[nbt_start:]
+            logger.debug(f"[PlayerData] Parsing NBT data from RCON response")
             
             if "playerGameType" in nbt_data:
                 gm_match = re.search(r'playerGameType:\s*(\d+)', nbt_data)
                 if gm_match:
                     gm_map = {0: "survival", 1: "creative", 2: "adventure", 3: "spectator"}
                     response_data["gamemode"] = gm_map.get(int(gm_match.group(1)), "unknown")
+                    logger.debug(f"[PlayerData] Parsed gamemode: {response_data['gamemode']}")
             
             if "XpLevel" in nbt_data:
                 xp_match = re.search(r'XpLevel:\s*(\d+)', nbt_data)
                 if xp_match:
                     response_data["level"] = int(xp_match.group(1))
+                    logger.debug(f"[PlayerData] Parsed level: {response_data['level']}")
             
             if "Health" in nbt_data:
                 health_match = re.search(r'Health:\s*(\d+\.?\d*)', nbt_data)
                 if health_match:
                     response_data["health"] = float(health_match.group(1))
+                    logger.debug(f"[PlayerData] Parsed health: {response_data['health']}")
             
             if "foodLevel" in nbt_data:
                 food_match = re.search(r'foodLevel:\s*(\d+)', nbt_data)
                 if food_match:
                     response_data["food"] = int(food_match.group(1))
+                    logger.debug(f"[PlayerData] Parsed food: {response_data['food']}")
             
             pos_match = re.search(r'Pos:\s*\[(-?\d+\.?\d*)d,\s*(-?\d+\.?\d*)d,\s*(-?\d+\.?\d*)d\]', nbt_data)
             if pos_match:
@@ -352,63 +972,31 @@ def parse_live_player_data(username: str, log_line: str) -> dict:
                     "y": round(float(pos_match.group(2)), 1),
                     "z": round(float(pos_match.group(3)), 1)
                 }
+                logger.debug(f"[PlayerData] Parsed position: {response_data['position']}")
             
             dim_match = re.search(r'Dimension:\s*"([^"]+)"', nbt_data)
             if dim_match:
                 response_data["dimension"] = dim_match.group(1)
+                logger.debug(f"[PlayerData] Parsed dimension: {response_data['dimension']}")
             
             inv_match = re.search(r'Inventory:\s*\[(.*?)\]', nbt_data, re.DOTALL)
             if inv_match:
-                inv_items = []
-                inv_content = inv_match.group(1)
+                inv_content = inv_match.group(1).strip()
+                logger.debug(f"[PlayerData] Found inventory data, content length: {len(inv_content)}")
                 
-                brace_depth = 0
-                current_item = ""
-                in_item = False
-                
-                for char in inv_content:
-                    if char == '{':
-                        brace_depth += 1
-                        if brace_depth == 1:
-                            in_item = True
-                        current_item += char
-                    elif char == '}':
-                        current_item += char
-                        brace_depth -= 1
-                        if brace_depth == 0 and in_item:
-                            entry = current_item
-                            
-                            slot_match = re.search(r'Slot:\s*(\d+)[bs]?', entry)
-                            if not slot_match:
-                                current_item = ""
-                                in_item = False
-                                continue
-                            slot = int(slot_match.group(1))
-                            
-                            id_match = re.search(r'id:\s*"([^"]+)"', entry)
-                            if not id_match:
-                                current_item = ""
-                                in_item = False
-                                continue
-                            item_id = id_match.group(1).replace("minecraft:", "")
-                            
-                            count_match = re.search(r'Count:\s*(\d+)[bs]?', entry)
-                            count = int(count_match.group(1)) if count_match else 1
-                            
-                            inv_items.append({
-                                "slot": slot,
-                                "id": item_id,
-                                "count": count
-                            })
-                            
-                            current_item = ""
-                            in_item = False
-                    elif in_item:
-                        current_item += char
-                
+                # Use robust NBT compound parser to extract inventory items
+                inv_items = parse_nbt_compound_list(inv_content)
                 response_data["inventory"] = inv_items
                 
-            logger.info(f"[PlayerData] Parsed {username}: online={response_data['online']}, gamemode={response_data['gamemode']}, health={response_data['health']}, inventory={len(response_data['inventory'])} items")
+                if inv_items:
+                    logger.info(f"[PlayerData] Parsed {username}: online={response_data['online']}, gamemode={response_data['gamemode']}, health={response_data['health']}, inventory={len(inv_items)} items")
+                else:
+                    logger.info(f"[PlayerData] Parsed {username}: inventory is empty or contains no valid items")
+            else:
+                logger.info(f"[PlayerData] No inventory data found for {username} (player may have empty inventory)")
+        else:
+            logger.warning(f"[PlayerData] No NBT start brace found in RCON response for {username}")
+            response_data["error"] = "no_nbt_data"
     
     except Exception as e:
         logger.error(f"[PlayerData] Failed to parse live data: {e}")
@@ -431,6 +1019,89 @@ async def query_minecraft_player_data(username: str) -> dict:
         "fallback_reason": None
     }
     
+    # Try file-based method first (most reliable)
+    if server_status.state == ServerState.ACTIVE:
+        try:
+            # Force server to save player data to disk
+            from .commands import execute_command
+            logger.info(f"[PlayerData] Triggering save-all flush for {username}")
+            await execute_command("save-all flush")
+            time.sleep(0.5)  # Allow OS to complete write operation
+            
+            # Read from file
+            logger.info(f"[PlayerData] Attempting to read playerdata file for {username}")
+            file_data = read_playerdata_file_nbtlib(username)
+            if file_data:
+                logger.info(f"[PlayerData] Successfully read playerdata file, converting to API format")
+                player_data = convert_nbtlib_to_api_format(username, file_data)
+                player_data["source"] = "nbtlib_file"
+                player_data["online"] = True
+                logger.info(f"[PlayerData] Retrieved data via nbtlib for {username}: {len(player_data.get('inventory', []))} items")
+                return player_data
+            else:
+                logger.warning(f"[PlayerData] Failed to read playerdata file for {username}, falling back to RCON")
+        except Exception as e:
+            logger.warning(f"[PlayerData] File-based method failed: {e}")
+            logger.exception("[PlayerData] Full traceback:")
+    
+    # Fallback to RCON if file method fails
+    if server_status.state == ServerState.ACTIVE:
+        try:
+            from .commands import get_player_data
+            response = get_player_data(username)
+            
+            if response:
+                debug_info["method"] = "rcon_direct"
+                debug_info["response_length"] = len(response)
+                debug_info["response"] = response[:300] if len(response) > 300 else response
+                
+                # Check for truncated response (RCON limit ~4096 bytes)
+                if len(response) >= 4090:
+                    logger.warning(f"[PlayerData] RCON response truncated: {len(response)} bytes, using file fallback")
+                    # Try file-based method instead
+                    file_data = read_playerdata_file(username)
+                    if file_data:
+                        player_data = convert_filedata_to_api_format(username, file_data)
+                        player_data["source"] = "playerdata_file"
+                        player_data["online"] = True  # Assume online if we got here
+                        logger.info(f"[PlayerData] Retrieved data from file for {username}: {len(player_data.get('inventory', []))} items")
+                        return player_data
+                
+                logger.debug(f"[PlayerData] Raw RCON response for {username}:\n{response[:500]}{'...' if len(response) > 500 else ''}")
+                
+                # Parse RCON response for player data
+                player_data = parse_live_player_data(username, response)
+                if player_data and not player_data.get("error"):
+                    player_data["source"] = "rcon_live"
+                    
+                    # Check if inventory might be truncated (empty inventory but large response suggests truncation)
+                    has_inventory_tag = "Inventory:" in response
+                    inventory_is_empty = len(player_data.get('inventory', [])) == 0
+                    response_is_large = len(response) >= 3000  # Likely truncated if this large but no items
+                    
+                    if has_inventory_tag and inventory_is_empty and response_is_large:
+                        logger.warning(f"[PlayerData] Possible truncated inventory detected, fetching separately")
+                        # Fetch inventory separately to avoid RCON size limits
+                        from .commands import get_player_inventory
+                        inv_response = get_player_inventory(username)
+                        if inv_response:
+                            inv_items = parse_inventory_only(inv_response)
+                            if inv_items:
+                                player_data['inventory'] = inv_items
+                                logger.info(f"[PlayerData] Fetched {len(inv_items)} items via separate inventory query")
+                    
+                    logger.info(f"[PlayerData] RCON data retrieved for {username}: {len(player_data.get('inventory', []))} items, online={player_data.get('online')}")
+                    return player_data
+                else:
+                    logger.warning(f"[PlayerData] RCON response received but parsing failed or no valid data for {username}")
+                    logger.debug(f"[PlayerData] Parsed data: {player_data}")
+            else:
+                logger.debug(f"[PlayerData] RCON returned no response for {username}")
+        except Exception as e:
+            logger.warning(f"[PlayerData] RCON query exception: {e}")
+            logger.exception("[PlayerData] Full traceback:")
+    
+    # Fallback to log parsing method
     is_running = server_status.state == ServerState.ACTIVE and console_controller.is_console_running()
     debug_info["is_running"] = is_running
     
@@ -441,7 +1112,8 @@ async def query_minecraft_player_data(username: str) -> dict:
             
             time_before = time.time()
             
-            success = await console_controller.send_command(command)
+            from .commands import execute_command
+            success = await execute_command(command)
             debug_info["command_sent"] = success
             
             if success:

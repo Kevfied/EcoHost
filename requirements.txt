@@ -12,3 +12,9 @@ pywin32>=306
 bcrypt>=4.1.0
 python-jose[cryptography]>=3.3.0
 python-multipart>=0.0.6
+
+# RCON Support
+mcrcon>=0.7.0
+
+# NBT Parsing
+nbtlib>=2.0.0

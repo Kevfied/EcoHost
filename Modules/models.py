@@ -53,6 +53,11 @@ class Settings:
     high_performance_end: str = "22:00"  # 10 PM
     current_power_mode: str = "balanced"  # balanced, high_performance, power_saver, ultimate_performance
     ecohost_precision_enabled: bool = True  # EcoHost Precision smart power mode
+    
+    # RCON Settings
+    rcon_enabled: bool = False
+    rcon_port: int = 25575
+    rcon_password: str = "Kersh159357"
 
 
 # =============================================================================
@@ -83,42 +88,27 @@ logger = logging.getLogger(__name__)
 def load_settings_from_file() -> None:
     """Load settings from config.json file."""
     global app_settings
-    print("[Settings] load_settings_from_file() called!")
     try:
-        print(f"[Settings] Looking for config at: {CONFIG_FILE}")
-        logger.info(f"[Settings] Looking for config at: {CONFIG_FILE}")
-        print(f"[Settings] Config file exists: {CONFIG_FILE.exists()}")
-        logger.info(f"[Settings] Config file exists: {CONFIG_FILE.exists()}")
-        
         if CONFIG_FILE.exists():
             with open(CONFIG_FILE, 'r') as f:
                 data = json.load(f)
-                logger.info(f"[Settings] Raw config data: {data}")
                 # Merge with defaults to handle missing fields from old config files
                 default_settings = asdict(Settings())
-                print(f"[Settings] Default settings: {default_settings}")
-                logger.info(f"[Settings] Default settings: {default_settings}")
                 # Only update with known settings fields (filter out jwt_secret, etc.)
                 known_fields = set(default_settings.keys())
                 filtered_data = {k: v for k, v in data.items() if k in known_fields}
-                print(f"[Settings] Filtered config data: {filtered_data}")
-                logger.info(f"[Settings] Filtered config data: {filtered_data}")
                 default_settings.update(filtered_data)
-                print(f"[Settings] Merged settings: {default_settings}")
-                logger.info(f"[Settings] Merged settings: {default_settings}")
                 
                 # Update the existing app_settings object instead of creating a new one
                 for key, value in default_settings.items():
                     if hasattr(app_settings, key):
                         setattr(app_settings, key, value)
                 
-                print(f"[Settings] Updated app_settings object: {app_settings}")
                 logger.info(f"[Settings] Loaded settings from {CONFIG_FILE}")
                 logger.info(f"[Settings] EcoHost Precision: {app_settings.ecohost_precision_enabled}")
                 logger.info(f"[Settings] Power Mode Scheduling: {app_settings.power_mode_scheduling_enabled}")
                 logger.info(f"[Settings] Auto Shutdown: {app_settings.auto_shutdown_enabled}")
                 logger.info(f"[Settings] Auto Shutdown Duration: {app_settings.auto_shutdown_duration}")
-                logger.info(f"[Settings] app_settings object: {app_settings}")
         else:
             logger.warning(f"[Settings] No config file found at {CONFIG_FILE}, using defaults")
     except Exception as e:
@@ -184,6 +174,9 @@ class SettingsResponse(BaseModel):
     high_performance_end: str
     current_power_mode: str
     ecohost_precision_enabled: bool
+    rcon_enabled: bool
+    rcon_port: int
+    rcon_password: str
 
 
 class MetricsHistoryResponse(BaseModel):
@@ -204,4 +197,4 @@ class PlayerDataResponse(BaseModel):
     success: bool
     username: str
     data: dict = Field(default_factory=dict)
-    message: str = ""
+    message: Optional[str] = ""

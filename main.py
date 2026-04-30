@@ -252,16 +252,10 @@ async def lifespan(app: FastAPI):
     logger.info("[Auth] Authentication system initialized")
     
     load_settings_from_file()
-    print(f"[DEBUG] After load_settings_from_file: {app_settings}")
-    logger.info(f"[DEBUG] After load_settings_from_file: {app_settings}")
     
     app_settings.current_power_mode = get_current_power_mode()
-    print(f"[DEBUG] After setting current_power_mode: {app_settings}")
-    logger.info(f"[DEBUG] After setting current_power_mode: {app_settings}")
     
     attach_to_existing_server()
-    print(f"[DEBUG] After attach_to_existing_server: {app_settings}")
-    logger.info(f"[DEBUG] After attach_to_existing_server: {app_settings}")
     
     start_log_watcher()
     logger.info("MC-EcoHost ready")
@@ -310,6 +304,9 @@ class SettingsUpdate(BaseModel):
     high_performance_start: Optional[str] = None
     high_performance_end: Optional[str] = None
     ecohost_precision_enabled: Optional[bool] = None
+    rcon_enabled: Optional[bool] = None
+    rcon_port: Optional[int] = None
+    rcon_password: Optional[str] = None
 
 
 # =============================================================================
@@ -900,14 +897,12 @@ async def execute_console_command(
     current_user: User = Depends(require_moderator)
 ):
     """Execute a command in the Minecraft server console."""
-    if not PYWINAUTO_AVAILABLE:
-        return {"success": False, "message": "pywinauto is not available"}
-    
     if server_status.state != ServerState.ACTIVE:
         return {"success": False, "message": "Server is not running"}
     
     try:
-        success = await console_controller.send_command(request.command)
+        from Modules.commands import execute_command
+        success = await execute_command(request.command)
         if success:
             logger.info(f"[Console] Command executed: {request.command}")
             return {"success": True, "message": f"Command sent: {request.command}"}
@@ -921,20 +916,15 @@ async def execute_console_command(
 @app.get("/test")
 async def test_endpoint():
     """Simple test endpoint."""
-    print("[DEBUG] /test endpoint called!")
     return {"message": "API is working", "timestamp": time.time()}
 
 
 @app.get("/settings")
 async def get_settings(current_user: User = require_auth()):
     """Get current application settings."""
-    print("[DEBUG] /settings endpoint called!")
-    logger.info("[DEBUG] /settings endpoint called!")
     global app_settings
     from Modules.log_watcher import is_work_hours, calculate_target_power_mode
     from Modules.resource_monitor import get_system_resources
-    
-    logger.info(f"[API] GET /settings - Request received from user: {current_user.username}")
     
     # Get current status
     player_count = len(server_status.players)
@@ -942,14 +932,7 @@ async def get_settings(current_user: User = require_auth()):
     target_mode = calculate_target_power_mode(player_count)
     cpu, ram = get_system_resources()
     
-    logger.info(f"[API] GET /settings - app_settings object: {app_settings}")
-    logger.info(f"[API] GET /settings - Individual values:")
-    logger.info(f"  - auto_shutdown_enabled: {app_settings.auto_shutdown_enabled}")
-    logger.info(f"  - auto_shutdown_duration: {app_settings.auto_shutdown_duration}")
-    logger.info(f"  - ecohost_precision_enabled: {app_settings.ecohost_precision_enabled}")
-    logger.info(f"  - power_mode_scheduling_enabled: {app_settings.power_mode_scheduling_enabled}")
-    
-    settings_response = {
+    return {
         "auto_shutdown_enabled": app_settings.auto_shutdown_enabled,
         "auto_shutdown_duration": app_settings.auto_shutdown_duration,
         "auto_start_on_ping": app_settings.auto_start_on_ping,
@@ -958,6 +941,9 @@ async def get_settings(current_user: User = require_auth()):
         "high_performance_end": app_settings.high_performance_end,
         "current_power_mode": app_settings.current_power_mode,
         "ecohost_precision_enabled": app_settings.ecohost_precision_enabled,
+        "rcon_enabled": app_settings.rcon_enabled,
+        "rcon_port": app_settings.rcon_port,
+        "rcon_password": app_settings.rcon_password,
         "ecohost_precision_status": {
             "enabled": app_settings.ecohost_precision_enabled,
             "player_count": player_count,
@@ -967,9 +953,6 @@ async def get_settings(current_user: User = require_auth()):
             "ram_usage": ram
         }
     }
-    
-    logger.info(f"[API] GET /settings - Full response: {settings_response}")
-    return settings_response
 
 
 @app.put("/settings")
@@ -1031,6 +1014,22 @@ async def update_settings(
                 logger.info("[Settings] Server not active - setting power_saver mode")
                 set_windows_power_mode("power_saver")
                 app_settings.current_power_mode = "power_saver"
+    
+    if settings.rcon_enabled is not None:
+        app_settings.rcon_enabled = settings.rcon_enabled
+        logger.info(f"[Settings] RCON enabled: {settings.rcon_enabled}")
+    
+    if settings.rcon_port is not None:
+        if not (1 <= settings.rcon_port <= 65535):
+            return {"success": False, "message": "RCON port must be between 1 and 65535"}
+        app_settings.rcon_port = settings.rcon_port
+        logger.info(f"[Settings] RCON port: {settings.rcon_port}")
+    
+    if settings.rcon_password is not None:
+        if len(settings.rcon_password) < 4:
+            return {"success": False, "message": "RCON password must be at least 4 characters"}
+        app_settings.rcon_password = settings.rcon_password
+        logger.info(f"[Settings] RCON password updated")
     
     # Save settings to file
     save_settings_to_file()
@@ -1266,7 +1265,7 @@ async def get_player_statistics_endpoint(current_user: User = require_auth()):
 
 
 @app.get("/players/{username}/data", response_model=PlayerDataResponse)
-async def get_player_data(username: str, current_user: User = Depends(require_moderator)):
+async def get_player_data(username: str, current_user: User = Depends(require_auth)):
     """Get detailed player data (inventory, gamemode, health, level, etc.)"""
     try:
         cache_key = username.lower()
@@ -1282,8 +1281,9 @@ async def get_player_data(username: str, current_user: User = Depends(require_mo
                 )
         
         data = await query_minecraft_player_data(username)
+        logger.info(f"[PlayerData] Raw data returned for {username}: {data}")
         
-        if "error" in data:
+        if "error" in data and data["error"] is not None:
             return PlayerDataResponse(
                 success=False,
                 username=username,
@@ -1318,16 +1318,8 @@ async def set_player_gamemode(
 ):
     """Change player gamemode."""
     try:
-        if not PYWINAUTO_AVAILABLE or not console_controller.is_console_running():
-            return PlayerDataResponse(
-                success=False,
-                username=username,
-                data={},
-                message="Server console not available"
-            )
-        
-        command = f"gamemode {gamemode} {username}"
-        success = await console_controller.send_command(command)
+        from Modules.commands import set_gamemode
+        success = set_gamemode(username, gamemode)
         
         if success:
             return PlayerDataResponse(

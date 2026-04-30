@@ -69,9 +69,18 @@ def save_player_stats():
         with open(PLAYER_STATS_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         
-        logger.debug(f"[PlayerStats] Saved {len(data)} players to disk")
+        logger.info(f"[PlayerStats] Saved {len(data)} players to {PLAYER_STATS_FILE}")
+        logger.debug(f"[PlayerStats] File size: {PLAYER_STATS_FILE.stat().st_size} bytes")
+        
+        # Log sample of data for debugging
+        if data:
+            sample_user = next(iter(data.keys()))
+            sample_data = data[sample_user]
+            logger.debug(f"[PlayerStats] Sample data for {sample_user}: sessions={len(sample_data.get('sessions', []))}, playtime={sample_data.get('total_playtime_seconds', 0)}s, joins={sample_data.get('join_count', 0)}")
+        
     except Exception as e:
         logger.error(f"[PlayerStats] Failed to save player stats: {e}")
+        logger.exception("[PlayerStats] Full traceback:")
 
 
 def load_player_stats():
@@ -79,8 +88,13 @@ def load_player_stats():
     global player_sessions
     try:
         if PLAYER_STATS_FILE.exists():
+            file_size = PLAYER_STATS_FILE.stat().st_size
+            logger.info(f"[PlayerStats] Loading from {PLAYER_STATS_FILE} ({file_size} bytes)")
+            
             with open(PLAYER_STATS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            
+            logger.info(f"[PlayerStats] Found {len(data)} players in file")
             
             for username, pdata in data.items():
                 session = PlayerSession()
@@ -90,12 +104,17 @@ def load_player_stats():
                 session.join_count = pdata.get("join_count", 0)
                 session.first_join = pdata.get("first_join")
                 player_sessions[username] = session
+                
+                # Log detailed info for first few players for debugging
+                if len(player_sessions) <= 3:
+                    logger.debug(f"[PlayerStats] Loaded {username}: sessions={len(session.sessions)}, playtime={session.total_playtime_seconds}s, joins={session.join_count}")
             
-            logger.info(f"[PlayerStats] Loaded {len(player_sessions)} players from disk")
+            logger.info(f"[PlayerStats] Successfully loaded {len(player_sessions)} players from disk")
         else:
-            logger.info("[PlayerStats] No existing player stats file found")
+            logger.info(f"[PlayerStats] No existing player stats file found at {PLAYER_STATS_FILE}")
     except Exception as e:
-        logger.error(f"[PlayerStats] Failed to load player stats: {e}")
+        logger.error(f"[PlayerStats] Failed to load player stats from {PLAYER_STATS_FILE}: {e}")
+        logger.exception("[PlayerStats] Full traceback:")
 
 
 def save_uptime_stats():

@@ -7,5 +7,8 @@
     "high_performance_end": "21:00",
     "current_power_mode": "balanced",
     "ecohost_precision_enabled": true,
+    "rcon_enabled": true,
+    "rcon_port": 25575,
+    "rcon_password": "Kersh159357",
     "jwt_secret": "680f564c2b8b0f167d4273e8c1c0d699f87c372d2b88943eefcadd6b876d9795"
 }

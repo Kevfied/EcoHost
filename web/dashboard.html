@@ -1666,7 +1666,9 @@
 
         async function fetchPlayerStats() {
             try {
-                const response = await fetch('/players/stats');
+                const response = await fetch('/players/stats', {
+                    credentials: 'same-origin'
+                });
                 const data = await response.json();
                 
                 if (data.success) {
@@ -1768,6 +1770,7 @@
         }
 
         function openPlayerModal(player) {
+            console.log(`[DEBUG] Opening player modal for:`, player);
             currentPlayerModal = player;
             const modal = document.getElementById('player-modal');
             
@@ -1799,6 +1802,14 @@
             
             modal.classList.remove('hidden');
             modal.classList.add('flex');
+            
+            // Fetch live data if player is online
+            if (player.is_online) {
+                console.log(`[DEBUG] Player is online, fetching live data for: ${player.username}`);
+                fetchPlayerLiveData(player.username);
+            } else {
+                console.log(`[DEBUG] Player is offline, not fetching live data`);
+            }
         }
 
         function closePlayerModal() {
@@ -1928,22 +1939,34 @@
         });
 
         async function fetchPlayerLiveData(username) {
+            console.log(`[DEBUG] Fetching live data for player: ${username}`);
             try {
-                const response = await fetch(`/players/${username}/data`);
+                const response = await fetch(`/players/${username}/data`, {
+                    credentials: 'same-origin'
+                });
+                console.log(`[DEBUG] Response status: ${response.status}`);
                 const data = await response.json();
+                console.log(`[DEBUG] Response data:`, data);
                 
                 if (data.success) {
+                    console.log(`[DEBUG] Player data received successfully:`, data.data);
                     currentPlayerData = data.data;
                     renderPlayerLiveData(data.data);
+                } else {
+                    console.log(`[DEBUG] Player data fetch failed:`, data.message);
                 }
             } catch (e) {
-                console.error('Failed to fetch player data:', e);
+                console.error('[DEBUG] Failed to fetch player data:', e);
             }
         }
 
         function renderPlayerLiveData(data) {
+            console.log(`[DEBUG] Rendering player data:`, data);
+            console.log(`[DEBUG] Player online status:`, data.online);
+            
             // Handle offline players - show session history instead of live stats
             if (!data.online) {
+                console.log(`[DEBUG] Player is offline, showing offline message`);
                 const loadingEl = document.getElementById('live-stats-loading');
                 const contentEl = document.getElementById('live-stats-content');
                 const invLoadingEl = document.getElementById('inventory-loading');
@@ -2111,31 +2134,71 @@
                 
                 // Create sleek tooltip
                 const tooltip = document.createElement('div');
-                tooltip.className = 'fixed hidden z-50 px-3 py-2 bg-slate-800/90 backdrop-blur-md border border-slate-600 rounded-lg shadow-xl pointer-events-none';
-                tooltip.innerHTML = `
-                    <div class="flex items-center gap-2">
-                        <span class="w-6 h-6 flex items-center justify-center">${getItemIcon(item.id)}</span>
+                tooltip.className = 'fixed hidden z-50 px-4 py-3 bg-slate-800/95 backdrop-blur-md border border-slate-600/50 rounded-xl shadow-2xl pointer-events-none min-w-[200px] max-w-[280px]';
+                
+                let tooltipContent = `
+                    <div class="flex items-center gap-3 mb-2">
+                        <span class="w-8 h-8 flex items-center justify-center">${getItemIcon(item.id)}</span>
                         <div>
-                            <div class="text-sm font-semibold text-white capitalize">${formatItemName(item.id)}</div>
+                            <div class="text-sm font-bold text-white capitalize">${formatItemName(item.id)}</div>
                             <div class="text-xs text-slate-400">Slot ${slotNum} • x${item.count}</div>
                         </div>
                     </div>
                 `;
+                
+                // Add enchantments
+                if (item.enchantments && item.enchantments.length > 0) {
+                    tooltipContent += `<div class="mt-2 pt-2 border-t border-slate-600/50">`;
+                    tooltipContent += `<div class="text-xs font-semibold text-purple-400 mb-1">✨ Enchantments</div>`;
+                    item.enchantments.forEach(ench => {
+                        const romanNumeral = toRoman(ench.lvl);
+                        tooltipContent += `<div class="text-xs text-slate-300 ml-1">• ${formatEnchantmentName(ench.id)} ${romanNumeral}</div>`;
+                    });
+                    tooltipContent += `</div>`;
+                }
+                
+                // Add stored enchantments (books)
+                if (item.stored_enchantments && item.stored_enchantments.length > 0) {
+                    tooltipContent += `<div class="mt-2 pt-2 border-t border-slate-600/50">`;
+                    tooltipContent += `<div class="text-xs font-semibold text-blue-400 mb-1">📖 Stored Enchantments</div>`;
+                    item.stored_enchantments.forEach(ench => {
+                        const romanNumeral = toRoman(ench.lvl);
+                        tooltipContent += `<div class="text-xs text-slate-300 ml-1">• ${formatEnchantmentName(ench.id)} ${romanNumeral}</div>`;
+                    });
+                    tooltipContent += `</div>`;
+                }
+                
+                // Add potion effects
+                if (item.potion_type || (item.potion_effects && item.potion_effects.length > 0)) {
+                    tooltipContent += `<div class="mt-2 pt-2 border-t border-slate-600/50">`;
+                    tooltipContent += `<div class="text-xs font-semibold text-pink-400 mb-1">🧪 Potion Effects</div>`;
+                    
+                    if (item.potion_type) {
+                        tooltipContent += `<div class="text-xs text-slate-300 ml-1">• ${formatPotionName(item.potion_type)}</div>`;
+                    }
+                    
+                    if (item.potion_effects && item.potion_effects.length > 0) {
+                        item.potion_effects.forEach(effect => {
+                            const duration = formatDuration(effect.duration);
+                            const amplifier = effect.amplifier > 0 ? ` ${effect.amplifier + 1}` : '';
+                            tooltipContent += `<div class="text-xs text-slate-300 ml-1">• ${formatEffectName(effect.id)}${amplifier} (${duration})</div>`;
+                        });
+                    }
+                    tooltipContent += `</div>`;
+                }
+                
+                tooltip.innerHTML = tooltipContent;
                 document.body.appendChild(tooltip);
                 
-                // Hover delay logic
-                let hoverTimeout;
+                // Hover logic - show immediately
                 slot.addEventListener('mouseenter', (e) => {
-                    hoverTimeout = setTimeout(() => {
-                        const rect = slot.getBoundingClientRect();
-                        tooltip.style.left = `${rect.left + rect.width / 2 - 60}px`;
-                        tooltip.style.top = `${rect.top - 50}px`;
-                        tooltip.classList.remove('hidden');
-                    }, 1000);
+                    const rect = slot.getBoundingClientRect();
+                    tooltip.style.left = `${rect.left + rect.width / 2 - 60}px`;
+                    tooltip.style.top = `${rect.top - 50}px`;
+                    tooltip.classList.remove('hidden');
                 });
                 
                 slot.addEventListener('mouseleave', () => {
-                    clearTimeout(hoverTimeout);
                     tooltip.classList.add('hidden');
                 });
             }
@@ -2150,6 +2213,146 @@
         function getItemIcon(itemId) {
             const cleanId = itemId.replace('minecraft:', '');
             return `<img src="items/${cleanId}.png" class="w-5 h-5 object-contain" onerror="this.style.display='none'; this.parentElement.innerHTML = '<span class=\\'text-sm\\'>❓</span>';">`;
+        }
+
+        function toRoman(num) {
+            const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+            return roman[num - 1] || num;
+        }
+        
+        function formatEnchantmentName(enchId) {
+            const names = {
+                'protection': 'Protection',
+                'fire_protection': 'Fire Protection',
+                'feather_falling': 'Feather Falling',
+                'blast_protection': 'Blast Protection',
+                'projectile_protection': 'Projectile Protection',
+                'respiration': 'Respiration',
+                'aqua_affinity': 'Aqua Affinity',
+                'thorns': 'Thorns',
+                'depth_strider': 'Depth Strider',
+                'frost_walker': 'Frost Walker',
+                'sharpness': 'Sharpness',
+                'smite': 'Smite',
+                'bane_of_arthropods': 'Bane of Arthropods',
+                'efficiency': 'Efficiency',
+                'fortune': 'Fortune',
+                'silk_touch': 'Silk Touch',
+                'unbreaking': 'Unbreaking',
+                'mending': 'Mending',
+                'power': 'Power',
+                'punch': 'Punch',
+                'flame': 'Flame',
+                'infinity': 'Infinity',
+                'luck_of_the_sea': 'Luck of the Sea',
+                'lure': 'Lure',
+                'loyalty': 'Loyalty',
+                'riptide': 'Riptide',
+                'channeling': 'Channeling',
+                'impaling': 'Impaling',
+                'multishot': 'Multishot',
+                'piercing': 'Piercing',
+                'quick_charge': 'Quick Charge',
+                'sweeping': 'Sweeping Edge'
+            };
+            return names[enchId] || enchId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+        
+        function formatPotionName(potionType) {
+            const names = {
+                'water': 'Water Bottle',
+                'mundane': 'Mundane Potion',
+                'thick': 'Thick Potion',
+                'awkward': 'Awkward Potion',
+                'night_vision': 'Night Vision',
+                'long_night_vision': 'Long Night Vision',
+                'invisibility': 'Invisibility',
+                'long_invisibility': 'Long Invisibility',
+                'leaping': 'Leaping',
+                'long_leaping': 'Long Leaping',
+                'strong_leaping': 'Strong Leaping',
+                'fire_resistance': 'Fire Resistance',
+                'long_fire_resistance': 'Long Fire Resistance',
+                'swiftness': 'Swiftness',
+                'long_swiftness': 'Long Swiftness',
+                'strong_swiftness': 'Strong Swiftness',
+                'slowness': 'Slowness',
+                'long_slowness': 'Long Slowness',
+                'strong_slowness': 'Strong Slowness',
+                'water_breathing': 'Water Breathing',
+                'long_water_breathing': 'Long Water Breathing',
+                'healing': 'Healing',
+                'strong_healing': 'Strong Healing',
+                'harming': 'Harming',
+                'strong_harming': 'Strong Harming',
+                'poison': 'Poison',
+                'long_poison': 'Long Poison',
+                'strong_poison': 'Strong Poison',
+                'regeneration': 'Regeneration',
+                'long_regeneration': 'Long Regeneration',
+                'strong_regeneration': 'Strong Regeneration',
+                'strength': 'Strength',
+                'long_strength': 'Long Strength',
+                'strong_strength': 'Strong Strength',
+                'weakness': 'Weakness',
+                'long_weakness': 'Long Weakness',
+                'luck': 'Luck',
+                'turtle_master': 'Turtle Master',
+                'long_turtle_master': 'Long Turtle Master',
+                'strong_turtle_master': 'Strong Turtle Master',
+                'slow_falling': 'Slow Falling',
+                'long_slow_falling': 'Long Slow Falling'
+            };
+            return names[potionType] || potionType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+        
+        function formatEffectName(effectId) {
+            const names = {
+                'speed': 'Speed',
+                'slowness': 'Slowness',
+                'haste': 'Haste',
+                'mining_fatigue': 'Mining Fatigue',
+                'strength': 'Strength',
+                'instant_health': 'Instant Health',
+                'instant_damage': 'Instant Damage',
+                'jump_boost': 'Jump Boost',
+                'nausea': 'Nausea',
+                'regeneration': 'Regeneration',
+                'resistance': 'Resistance',
+                'fire_resistance': 'Fire Resistance',
+                'water_breathing': 'Water Breathing',
+                'invisibility': 'Invisibility',
+                'blindness': 'Blindness',
+                'night_vision': 'Night Vision',
+                'hunger': 'Hunger',
+                'weakness': 'Weakness',
+                'poison': 'Poison',
+                'wither': 'Wither',
+                'health_boost': 'Health Boost',
+                'absorption': 'Absorption',
+                'saturation': 'Saturation',
+                'glowing': 'Glowing',
+                'levitation': 'Levitation',
+                'luck': 'Luck',
+                'unluck': 'Unluck',
+                'slow_falling': 'Slow Falling',
+                'conduit_power': 'Conduit Power',
+                'dolphins_grace': 'Dolphin\'s Grace',
+                'bad_omen': 'Bad Omen',
+                'hero_of_the_village': 'Hero of the Village'
+            };
+            return names[effectId] || effectId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+        
+        function formatDuration(ticks) {
+            const seconds = Math.floor(ticks / 20);
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds % 60;
+            
+            if (minutes > 0) {
+                return `${minutes}m ${remainingSeconds}s`;
+            }
+            return `${seconds}s`;
         }
 
         function getItemImage(itemId) {
