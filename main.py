@@ -1,0 +1,1363 @@
+"""
+MC-EcoHost - Minecraft Server Management System
+The Core: FastAPI Backend with Ghost Console Controller
+"""
+
+import asyncio
+import json
+import os
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Optional
+
+import psutil
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+# Authentication imports
+from auth import (
+    init_auth,
+    UserRole,
+    User,
+    UserResponse,
+    UserCreate,
+    UserLogin,
+    TokenData,
+    ChangePasswordRequest,
+    get_user_by_username,
+    get_user_by_id,
+    get_all_users,
+    save_user,
+    delete_user_by_id,
+    verify_password,
+    hash_password,
+    validate_password_strength,
+    create_access_token,
+    verify_token,
+    has_permission,
+    update_last_login,
+    is_rate_limited,
+    record_failed_attempt,
+    clear_failed_attempts,
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+)
+
+# Module imports
+from Modules.config import (
+    SERVER_DIR, RUN_BAT, LOG_FILE, CONSOLE_WINDOW_TITLE,
+    LOG_BUFFER_SIZE, MAX_PLAYERS, MINECRAFT_PORT,
+    GRACEFUL_SHUTDOWN_TIMEOUT, STATUS_CHECK_INTERVAL,
+    CONFIG_FILE, BASE_DIR, IDLE_COUNTDOWN_SECONDS,
+    AUTO_START_ON_PING, stop_initiated_time, server_hung,
+    empty_server_countdown, countdown_active, ping_listener_running,
+    ecohost_precision_last_mode_change, ecohost_precision_cooldown,
+    ecohost_precision_empty_since, ECOHOST_LOG_BUFFER_SIZE
+)
+from Modules.models import (
+    ServerState, PlayerInfo, ServerStatus, Settings,
+    server_status, app_settings, log_lines, log_lock,
+    ecohost_logs, ecohost_logs_lock, start_time, log_watcher_running,
+    java_process_pid, load_settings_from_file, save_settings_to_file,
+    PowerResponse, StatusResponse, LogsResponse, ConsoleStatusResponse,
+    SettingsResponse, MetricsHistoryResponse, PlayerStatsResponse,
+    PlayerDataResponse
+)
+from Modules.server_control import console_controller, is_minecraft_process_running
+from Modules.log_watcher import start_log_watcher, record_player_join, record_player_leave, update_ecohost_precision_mode
+from Modules.resource_monitor import get_system_resources
+from Modules.player_sessions import (
+    player_sessions, server_uptime_stats, PlayerSession,
+    format_duration, save_player_stats, load_player_stats,
+    save_uptime_stats, load_uptime_stats, record_server_start,
+    record_server_stop, get_total_uptime
+)
+from Modules.player_data import (
+    player_data_cache, PLAYER_DATA_CACHE_TTL,
+    query_minecraft_player_data, SimpleNBTParser,
+    parse_nbt_inventory, read_offline_player_data,
+    has_following_entity_data, is_offline_response,
+    parse_live_player_data, PYWINAUTO_AVAILABLE
+)
+
+import logging
+from logging.handlers import MemoryHandler
+from dataclasses import dataclass
+from contextlib import asynccontextmanager
+import subprocess
+
+logger = logging.getLogger(__name__)
+
+# Setup logging handler
+class EcoHostLogHandler(logging.Handler):
+    """Custom handler to capture logs to a buffer."""
+    def emit(self, record):
+        log_entry = self.format(record)
+        with ecohost_logs_lock:
+            ecohost_logs.append(log_entry)
+            if len(ecohost_logs) > ECOHOST_LOG_BUFFER_SIZE:
+                ecohost_logs.pop(0)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        EcoHostLogHandler(),
+        logging.StreamHandler()
+    ]
+)
+
+# Add custom handler to capture logs
+ecohost_handler = EcoHostLogHandler()
+ecohost_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+logger.addHandler(ecohost_handler)
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+def set_windows_power_mode(mode: str) -> bool:
+    """Set Windows power mode using powercfg command."""
+    try:
+        if mode == "ultimate_performance":
+            guid = "e9a42b02-d5df-448d-aa00-03f14749eb61"
+        elif mode == "high_performance":
+            guid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+        elif mode == "power_saver":
+            guid = "a1841308-3541-4fab-bc81-f71556f20b4a"
+        else:
+            guid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        
+        result = subprocess.run(
+            ["powercfg", "/setactive", guid],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        logger.info(f"[PowerMode] Set power mode to {mode}")
+        return True
+    except subprocess.CalledProcessError as e:
+        if mode == "ultimate_performance" and ("Not Supported" in str(e.stderr) or "does not exist" in str(e.stderr).lower()):
+            logger.warning("[PowerMode] Ultimate Performance plan not available, falling back to High Performance")
+            return set_windows_power_mode("high_performance")
+        logger.error(f"[PowerMode] Failed to set power mode: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"[PowerMode] Error setting power mode: {e}")
+        return False
+
+
+def get_current_power_mode() -> str:
+    """Get current Windows power mode."""
+    try:
+        result = subprocess.run(
+            ["powercfg", "/getactivescheme"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        output = result.stdout
+        if "e9a42b02-d5df-448d-aa00-03f14749eb61" in output:
+            return "ultimate_performance"
+        elif "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" in output:
+            return "high_performance"
+        elif "a1841308-3541-4fab-bc81-f71556f20b4a" in output:
+            return "power_saver"
+        else:
+            return "balanced"
+    except Exception as e:
+        logger.error(f"[PowerMode] Failed to get power mode: {e}")
+        return "balanced"
+
+
+def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    """Check if a specific port is open on the given host."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (socket.timeout, socket.error, OSError):
+        return False
+
+
+def get_network_status() -> dict[str, bool]:
+    """Check network adapter status for VPN connections."""
+    status = {"zerotier": False, "radmin": False}
+    try:
+        net_if_addrs = psutil.net_if_addrs()
+        net_if_stats = psutil.net_if_stats()
+        
+        for interface, addresses in net_if_addrs.items():
+            interface_lower = interface.lower()
+            is_up = net_if_stats.get(interface, None)
+            is_interface_up = is_up.isup if is_up else False
+            
+            if not is_interface_up:
+                continue
+            
+            zerotier_patterns = ["zerotier", "zt", "zttap", "zttun"]
+            if any(pattern in interface_lower for pattern in zerotier_patterns):
+                status["zerotier"] = True
+            
+            if "radmin" in interface_lower:
+                status["radmin"] = True
+    except Exception as e:
+        logger.error(f"Failed to get network status: {e}")
+    
+    return status
+
+
+def attach_to_existing_server() -> bool:
+    """Detect and attach to an already-running Minecraft server by window or Java."""
+    global start_time
+    
+    if PYWINAUTO_AVAILABLE and console_controller.is_console_running():
+        logger.info(f"[GhostConsole] Found existing console window '{CONSOLE_WINDOW_TITLE}'")
+        start_time = time.time()
+        
+        port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
+        if port_open:
+            logger.info("[GhostConsole] Server port open - marking as ACTIVE")
+            server_status.state = ServerState.ACTIVE
+        else:
+            logger.info("[GhostConsole] Server port closed - marking as STARTING")
+            server_status.state = ServerState.STARTING
+        return True
+    
+    if is_minecraft_process_running():
+        logger.info("[GhostConsole] Found Java process without window, attaching...")
+        start_time = time.time()
+        
+        port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
+        if port_open:
+            server_status.state = ServerState.ACTIVE
+        else:
+            server_status.state = ServerState.STARTING
+        return True
+    return False
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler (replaces deprecated on_event)."""
+    logger.info("MC-EcoHost starting up...")
+    
+    init_auth()
+    logger.info("[Auth] Authentication system initialized")
+    
+    load_settings_from_file()
+    print(f"[DEBUG] After load_settings_from_file: {app_settings}")
+    logger.info(f"[DEBUG] After load_settings_from_file: {app_settings}")
+    
+    app_settings.current_power_mode = get_current_power_mode()
+    print(f"[DEBUG] After setting current_power_mode: {app_settings}")
+    logger.info(f"[DEBUG] After setting current_power_mode: {app_settings}")
+    
+    attach_to_existing_server()
+    print(f"[DEBUG] After attach_to_existing_server: {app_settings}")
+    logger.info(f"[DEBUG] After attach_to_existing_server: {app_settings}")
+    
+    start_log_watcher()
+    logger.info("MC-EcoHost ready")
+    yield
+    logger.info("MC-EcoHost shutting down...")
+
+
+# =============================================================================
+# FastAPI Application
+# =============================================================================
+
+app = FastAPI(title="MC-EcoHost", lifespan=lifespan)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files
+app.mount("/items", StaticFiles(directory=str(BASE_DIR / "items")), name="items")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web")), name="static")
+
+
+# =============================================================================
+# Request/Response Models for Endpoints
+# =============================================================================
+
+
+class PowerModeRequest(BaseModel):
+    mode: str
+
+
+class ConsoleCommandRequest(BaseModel):
+    command: str
+
+
+class SettingsUpdate(BaseModel):
+    auto_shutdown_enabled: Optional[bool] = None
+    auto_shutdown_duration: Optional[int] = None
+    auto_start_on_ping: Optional[bool] = None
+    power_mode_scheduling_enabled: Optional[bool] = None
+    high_performance_start: Optional[str] = None
+    high_performance_end: Optional[str] = None
+    ecohost_precision_enabled: Optional[bool] = None
+
+
+# =============================================================================
+# Authentication Dependencies
+# =============================================================================
+
+
+async def get_current_user(request: Request) -> User:
+    """Extract and verify user from JWT cookie."""
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    token_data = verify_token(token)
+    if not token_data or not token_data.user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user = get_user_by_id(token_data.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    
+    return user
+
+
+def require_auth():
+    """Dependency that requires authentication."""
+    return Depends(get_current_user)
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """Require admin role."""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def require_moderator(user: User = Depends(get_current_user)) -> User:
+    """Require moderator or admin role."""
+    if user.role not in [UserRole.MODERATOR, UserRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Moderator access required")
+    return user
+
+
+async def require_server_start(user: User = Depends(get_current_user)) -> User:
+    """Require permission to start server."""
+    if not has_permission(user.role, "server_start"):
+        raise HTTPException(status_code=403, detail="Server start permission required")
+    return user
+
+
+async def require_permission(permission: str):
+    """Factory for permission-based dependency."""
+    async def checker(user: User = Depends(get_current_user)) -> User:
+        if not has_permission(user.role, permission):
+            raise HTTPException(status_code=403, detail=f"Permission denied: {permission}")
+        return user
+    return checker
+
+
+# =============================================================================
+# Security Headers Middleware
+# =============================================================================
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+# Get the directory where dashboard.html is located
+DASHBOARD_DIR = Path(__file__).parent / "web"
+
+@app.get("/")
+async def serve_dashboard(current_user: User = require_auth()):
+    """Serve the main dashboard (requires authentication)."""
+    dashboard_path = DASHBOARD_DIR / "dashboard.html"
+    if dashboard_path.exists():
+        return FileResponse(dashboard_path)
+    return {"error": "Dashboard not found"}
+
+
+@app.get("/login.html")
+async def serve_login():
+    """Serve the login page."""
+    login_path = DASHBOARD_DIR / "login.html"
+    if login_path.exists():
+        return FileResponse(login_path)
+    return {"error": "Login page not found"}
+
+
+@app.get("/static/{file_path:path}")
+async def serve_static(file_path: str):
+    """Serve static files from web directory."""
+    static_path = DASHBOARD_DIR / file_path
+    if static_path.exists() and static_path.is_file():
+        return FileResponse(static_path)
+    return {"error": "File not found"}
+
+
+# =============================================================================
+# Authentication Endpoints
+# =============================================================================
+
+@app.post("/auth/login")
+async def login(request: Request, login_data: UserLogin):
+    """Authenticate user and set JWT cookie."""
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check rate limiting
+    is_limited, remaining = is_rate_limited(client_ip)
+    if is_limited:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed attempts. Try again in {remaining} seconds."
+        )
+    
+    # Find user
+    user = get_user_by_username(login_data.username)
+    if not user or not user.is_active:
+        record_failed_attempt(client_ip)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Verify password
+    if not verify_password(login_data.password, user.password_hash):
+        record_failed_attempt(client_ip)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Clear failed attempts on success
+    clear_failed_attempts(client_ip)
+    
+    # Update last login
+    update_last_login(user.id)
+    
+    # Create JWT token
+    access_token = create_access_token(
+        data={
+            "sub": user.id,
+            "username": user.username,
+            "role": user.role.value,
+        }
+    )
+    
+    # Set cookie and return response
+    response = JSONResponse({
+        "success": True,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "role": user.role.value,
+            "created_at": user.created_at,
+            "last_login": time.time(),
+            "is_active": user.is_active,
+            "require_password_change": user.require_password_change,
+        },
+        "require_password_change": user.require_password_change,
+    })
+    
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,  # Set to True in production with HTTPS
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    
+    logger.info(f"[Auth] User '{user.username}' logged in from {client_ip}")
+    return response
+
+
+@app.post("/auth/logout")
+async def logout():
+    """Logout user by clearing cookie."""
+    response = JSONResponse({"success": True, "message": "Logged out"})
+    response.delete_cookie(key="access_token")
+    return response
+
+
+@app.get("/auth/verify")
+async def verify_auth(current_user: User = require_auth()):
+    """Verify current authentication status."""
+    return {
+        "authenticated": True,
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "role": current_user.role.value,
+            "created_at": current_user.created_at,
+            "last_login": current_user.last_login,
+            "is_active": current_user.is_active,
+            "require_password_change": current_user.require_password_change,
+        },
+    }
+
+
+@app.get("/auth/me")
+async def get_current_user_info(current_user: User = require_auth()):
+    """Get current user information."""
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "role": current_user.role.value,
+        "created_at": current_user.created_at,
+        "last_login": current_user.last_login,
+        "is_active": current_user.is_active,
+        "require_password_change": current_user.require_password_change,
+    }
+
+
+@app.post("/auth/change-password")
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: User = require_auth(),
+):
+    """Change user password."""
+    # Validate new password strength
+    is_valid, error_msg = validate_password_strength(request.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    # If changing own password, verify current password
+    if request.current_password:
+        if not verify_password(request.current_password, current_user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+    elif current_user.require_password_change:
+        # First-time password change - no current password needed
+        pass
+    else:
+        raise HTTPException(status_code=400, detail="Current password required")
+    
+    # Update password
+    current_user.password_hash = hash_password(request.new_password)
+    current_user.require_password_change = False
+    save_user(current_user)
+    
+    logger.info(f"[Auth] User '{current_user.username}' changed password")
+    return {"success": True, "message": "Password changed successfully"}
+
+
+# =============================================================================
+# User Management Endpoints (Admin Only)
+# =============================================================================
+
+@app.get("/users")
+async def list_users(admin: User = Depends(require_admin)):
+    """List all users (admin only)."""
+    users = get_all_users()
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "role": u.role.value,
+            "created_at": u.created_at,
+            "last_login": u.last_login,
+            "is_active": u.is_active,
+            "require_password_change": u.require_password_change,
+        }
+        for u in users
+    ]
+
+
+@app.post("/users")
+async def create_user(user_data: UserCreate, admin: User = Depends(require_admin)):
+    """Create a new user (admin only)."""
+    # Check if username already exists
+    if get_user_by_username(user_data.username):
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    # Validate password strength
+    is_valid, error_msg = validate_password_strength(user_data.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    # Create user
+    new_user = User(
+        id=str(uuid.uuid4()),
+        username=user_data.username.lower(),
+        password_hash=hash_password(user_data.password),
+        role=user_data.role,
+        created_at=time.time(),
+        is_active=True,
+        require_password_change=True,  # Force password change on first login
+    )
+    
+    save_user(new_user)
+    logger.info(f"[Auth] Admin '{admin.username}' created user '{new_user.username}' with role '{new_user.role.value}'")
+    
+    return {
+        "success": True,
+        "user": {
+            "id": new_user.id,
+            "username": new_user.username,
+            "role": new_user.role.value,
+            "created_at": new_user.created_at,
+            "last_login": None,
+            "is_active": new_user.is_active,
+            "require_password_change": new_user.require_password_change,
+        },
+    }
+
+
+@app.delete("/users/{user_id}")
+async def delete_user(user_id: str, admin: User = Depends(require_admin)):
+    """Delete a user (admin only)."""
+    # Prevent self-deletion
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    # Check if user exists
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Delete user
+    if delete_user_by_id(user_id):
+        logger.info(f"[Auth] Admin '{admin.username}' deleted user '{user.username}'")
+        return {"success": True, "message": f"User '{user.username}' deleted"}
+    
+    raise HTTPException(status_code=500, detail="Failed to delete user")
+
+
+@app.put("/users/{user_id}/role")
+async def update_user_role(
+    user_id: str,
+    role: UserRole,
+    admin: User = Depends(require_admin),
+):
+    """Update user role (admin only)."""
+    # Prevent changing own role
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    old_role = user.role
+    user.role = role
+    save_user(user)
+    
+    logger.info(f"[Auth] Admin '{admin.username}' changed user '{user.username}' role from '{old_role.value}' to '{role.value}'")
+    return {"success": True, "message": f"Role updated to '{role.value}'"}
+
+
+@app.put("/users/{user_id}/password")
+async def admin_reset_password(
+    user_id: str,
+    new_password: str,
+    admin: User = Depends(require_admin),
+):
+    """Reset user password (admin only)."""
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Validate password strength
+    is_valid, error_msg = validate_password_strength(new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    user.password_hash = hash_password(new_password)
+    user.require_password_change = True  # Force password change on next login
+    save_user(user)
+    
+    logger.info(f"[Auth] Admin '{admin.username}' reset password for user '{user.username}'")
+    return {"success": True, "message": "Password reset successfully"}
+
+
+@app.put("/users/{user_id}/status")
+async def update_user_status(
+    user_id: str,
+    is_active: bool,
+    admin: User = Depends(require_admin),
+):
+    """Enable/disable user account (admin only)."""
+    # Prevent disabling own account
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="Cannot disable your own account")
+    
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user.is_active = is_active
+    save_user(user)
+    
+    status = "enabled" if is_active else "disabled"
+    logger.info(f"[Auth] Admin '{admin.username}' {status} user '{user.username}'")
+    return {"success": True, "message": f"Account {status}"}
+
+
+# =============================================================================
+# Protected Status Endpoint
+# =============================================================================
+
+@app.get("/status", response_model=StatusResponse)
+async def get_status(current_user: User = require_auth()):
+    """Get current server status including console link state."""
+    global server_status, server_hung
+
+    cpu, ram = get_system_resources()
+    server_status.cpu_usage = cpu
+    server_status.ram_usage = ram
+
+    if server_status.state == ServerState.ACTIVE:
+        server_status.uptime = time.time() - start_time
+        if server_status.players:
+            server_status.last_player_time = time.time()
+
+    # Check console link status
+    console_link = "connected" if console_controller.is_console_running() else "disconnected"
+    
+    # Get network status
+    network = get_network_status()
+
+    return StatusResponse(
+        state=server_status.state,
+        players=[p.username for p in server_status.players],
+        cpu_usage=cpu,
+        ram_usage=ram,
+        uptime=server_status.uptime,
+        player_count=len(server_status.players),
+        max_players=MAX_PLAYERS,
+        network=network,
+        console_link=console_link,
+        server_hung=server_hung,
+    )
+
+
+@app.get("/console/status", response_model=ConsoleStatusResponse)
+async def get_console_status(current_user: User = require_auth()):
+    """Get detailed console window status."""
+    window_found = console_controller.is_console_running()
+    return ConsoleStatusResponse(
+        window_title=CONSOLE_WINDOW_TITLE,
+        window_found=window_found,
+        pywinauto_available=PYWINAUTO_AVAILABLE,
+    )
+
+
+@app.post("/power/start", response_model=PowerResponse)
+async def start_server(current_user: User = Depends(require_server_start)):
+    """Start the Minecraft server in a visible CMD window."""
+    global server_status
+
+    if server_status.state != ServerState.IDLE:
+        return PowerResponse(
+            success=False,
+            message=f"Cannot start: Server is {server_status.state.value}",
+            state=server_status.state,
+        )
+
+    # Verify run.bat exists
+    if not RUN_BAT.exists():
+        logger.error(f"[GhostConsole] run.bat not found at {RUN_BAT}")
+        return PowerResponse(
+            success=False,
+            message=f"run.bat not found at {SERVER_DIR}",
+            state=ServerState.IDLE,
+        )
+
+    server_status.state = ServerState.STARTING
+    logger.info(f"[GhostConsole] Starting Minecraft server from {RUN_BAT}")
+
+    # Switch to High Performance power mode when starting server
+    set_windows_power_mode("high_performance")
+
+    try:
+        success = await console_controller.start()
+        
+        if success:
+            # Record server start for uptime tracking
+            record_server_start()
+            return PowerResponse(
+                success=True,
+                message=f"Server started in window '{CONSOLE_WINDOW_TITLE}'",
+                state=ServerState.STARTING,
+            )
+        else:
+            server_status.state = ServerState.IDLE
+            return PowerResponse(
+                success=False,
+                message="Failed to start server window",
+                state=ServerState.IDLE,
+            )
+        
+    except Exception as e:
+        logger.error(f"[GhostConsole] Failed to start server: {e}")
+        server_status.state = ServerState.IDLE
+        return PowerResponse(
+            success=False,
+            message=f"Failed to start server: {str(e)}",
+            state=ServerState.IDLE,
+        )
+
+
+@app.post("/power/stop", response_model=PowerResponse)
+async def stop_server(current_user: User = Depends(require_moderator)):
+    """Stop the Minecraft server via window control."""
+    global server_status, server_hung
+
+    if server_status.state == ServerState.IDLE:
+        return PowerResponse(
+            success=False,
+            message="Server is not running",
+            state=server_status.state,
+        )
+
+    # Record server stop for uptime tracking
+    record_server_stop()
+    
+    server_status.state = ServerState.STOPPING
+    server_hung = False  # Reset hung state
+
+    success = await console_controller.stop()
+
+    if success:
+        # Switch to Power Saver mode after stopping server
+        set_windows_power_mode("power_saver")
+        return PowerResponse(
+            success=True,
+            message="Stop command sent to console window",
+            state=ServerState.STOPPING,
+        )
+    else:
+        server_status.state = ServerState.IDLE
+        return PowerResponse(
+            success=False,
+            message="Failed to stop server",
+            state=ServerState.IDLE,
+        )
+
+
+@app.get("/logs", response_model=LogsResponse)
+async def get_logs(current_user: User = require_auth()):
+    """Get the last 50 lines of server logs."""
+    with log_lock:
+        return LogsResponse(
+            logs=log_lines[-LOG_BUFFER_SIZE:] if log_lines else [],
+            count=len(log_lines),
+        )
+
+
+@app.get("/ecohost-logs", response_model=LogsResponse)
+async def get_ecohost_logs(current_user: User = require_auth()):
+    """Get the last 50 lines of EcoHost application logs."""
+    with ecohost_logs_lock:
+        return LogsResponse(
+            logs=ecohost_logs[-ECOHOST_LOG_BUFFER_SIZE:] if ecohost_logs else [],
+            count=len(ecohost_logs),
+        )
+
+
+@app.post("/power/mode")
+async def set_power_mode(request: PowerModeRequest):
+    """Manually set Windows power mode and disable auto power modes."""
+    global app_settings
+    
+    valid_modes = ["ultimate_performance", "high_performance", "balanced", "power_saver"]
+    if request.mode not in valid_modes:
+        return {"success": False, "message": f"Invalid power mode. Valid modes: {', '.join(valid_modes)}"}
+    
+    # Disable auto power modes when user manually switches
+    app_settings.ecohost_precision_enabled = False
+    app_settings.power_mode_scheduling_enabled = False
+    app_settings.current_power_mode = request.mode
+    
+    # Set the power mode
+    success = set_windows_power_mode(request.mode)
+    
+    if success:
+        logger.info(f"[PowerMode] Manual power mode set to {request.mode}")
+        logger.info("[PowerMode] Auto power modes disabled (EcoHost Precision and Power Mode Scheduling)")
+        save_settings_to_file()
+        return {"success": True, "message": f"Power mode set to {request.mode}", "mode": request.mode}
+    else:
+        return {"success": False, "message": "Failed to set power mode"}
+
+
+@app.post("/console/command")
+async def execute_console_command(
+    request: ConsoleCommandRequest,
+    current_user: User = Depends(require_moderator)
+):
+    """Execute a command in the Minecraft server console."""
+    if not PYWINAUTO_AVAILABLE:
+        return {"success": False, "message": "pywinauto is not available"}
+    
+    if server_status.state != ServerState.ACTIVE:
+        return {"success": False, "message": "Server is not running"}
+    
+    try:
+        success = await console_controller.send_command(request.command)
+        if success:
+            logger.info(f"[Console] Command executed: {request.command}")
+            return {"success": True, "message": f"Command sent: {request.command}"}
+        else:
+            return {"success": False, "message": "Failed to send command"}
+    except Exception as e:
+        logger.error(f"[Console] Failed to execute command: {e}")
+        return {"success": False, "message": f"Failed to execute command: {str(e)}"}
+
+
+@app.get("/test")
+async def test_endpoint():
+    """Simple test endpoint."""
+    print("[DEBUG] /test endpoint called!")
+    return {"message": "API is working", "timestamp": time.time()}
+
+
+@app.get("/settings")
+async def get_settings(current_user: User = require_auth()):
+    """Get current application settings."""
+    print("[DEBUG] /settings endpoint called!")
+    logger.info("[DEBUG] /settings endpoint called!")
+    global app_settings
+    from Modules.log_watcher import is_work_hours, calculate_target_power_mode
+    from Modules.resource_monitor import get_system_resources
+    
+    logger.info(f"[API] GET /settings - Request received from user: {current_user.username}")
+    
+    # Get current status
+    player_count = len(server_status.players)
+    is_work_time = is_work_hours()
+    target_mode = calculate_target_power_mode(player_count)
+    cpu, ram = get_system_resources()
+    
+    logger.info(f"[API] GET /settings - app_settings object: {app_settings}")
+    logger.info(f"[API] GET /settings - Individual values:")
+    logger.info(f"  - auto_shutdown_enabled: {app_settings.auto_shutdown_enabled}")
+    logger.info(f"  - auto_shutdown_duration: {app_settings.auto_shutdown_duration}")
+    logger.info(f"  - ecohost_precision_enabled: {app_settings.ecohost_precision_enabled}")
+    logger.info(f"  - power_mode_scheduling_enabled: {app_settings.power_mode_scheduling_enabled}")
+    
+    settings_response = {
+        "auto_shutdown_enabled": app_settings.auto_shutdown_enabled,
+        "auto_shutdown_duration": app_settings.auto_shutdown_duration,
+        "auto_start_on_ping": app_settings.auto_start_on_ping,
+        "power_mode_scheduling_enabled": app_settings.power_mode_scheduling_enabled,
+        "high_performance_start": app_settings.high_performance_start,
+        "high_performance_end": app_settings.high_performance_end,
+        "current_power_mode": app_settings.current_power_mode,
+        "ecohost_precision_enabled": app_settings.ecohost_precision_enabled,
+        "ecohost_precision_status": {
+            "enabled": app_settings.ecohost_precision_enabled,
+            "player_count": player_count,
+            "is_work_hours": is_work_time,
+            "target_mode": target_mode,
+            "cpu_usage": cpu,
+            "ram_usage": ram
+        }
+    }
+    
+    logger.info(f"[API] GET /settings - Full response: {settings_response}")
+    return settings_response
+
+
+@app.put("/settings")
+async def update_settings(
+    settings: SettingsUpdate,
+    current_user: User = Depends(require_admin)
+):
+    """Update application settings."""
+    global app_settings
+    
+    if settings.auto_shutdown_enabled is not None:
+        app_settings.auto_shutdown_enabled = settings.auto_shutdown_enabled
+        logger.info(f"[Settings] Auto-shutdown enabled: {settings.auto_shutdown_enabled}")
+    
+    if settings.auto_shutdown_duration is not None:
+        if settings.auto_shutdown_duration < 10:
+            return {"success": False, "message": "Auto-shutdown duration must be at least 10 seconds"}
+        app_settings.auto_shutdown_duration = settings.auto_shutdown_duration
+        logger.info(f"[Settings] Auto-shutdown duration: {settings.auto_shutdown_duration}s")
+    
+    if settings.auto_start_on_ping is not None:
+        app_settings.auto_start_on_ping = settings.auto_start_on_ping
+        logger.info(f"[Settings] Auto-start on ping: {settings.auto_start_on_ping}")
+    
+    if settings.power_mode_scheduling_enabled is not None:
+        app_settings.power_mode_scheduling_enabled = settings.power_mode_scheduling_enabled
+        logger.info(f"[Settings] Power mode scheduling: {settings.power_mode_scheduling_enabled}")
+    
+    if settings.high_performance_start is not None:
+        # Validate time format
+        try:
+            from datetime import datetime
+            datetime.strptime(settings.high_performance_start, "%H:%M")
+            app_settings.high_performance_start = settings.high_performance_start
+            logger.info(f"[Settings] High performance start: {settings.high_performance_start}")
+        except ValueError:
+            return {"success": False, "message": "Invalid time format. Use HH:MM"}
+    
+    if settings.high_performance_end is not None:
+        # Validate time format
+        try:
+            from datetime import datetime
+            datetime.strptime(settings.high_performance_end, "%H:%M")
+            app_settings.high_performance_end = settings.high_performance_end
+            logger.info(f"[Settings] High performance end: {settings.high_performance_end}")
+        except ValueError:
+            return {"success": False, "message": "Invalid time format. Use HH:MM"}
+    
+    if settings.ecohost_precision_enabled is not None:
+        app_settings.ecohost_precision_enabled = settings.ecohost_precision_enabled
+        logger.info(f"[Settings] EcoHost Precision: {settings.ecohost_precision_enabled}")
+        # If EcoHost Precision is being enabled, run immediate power mode check
+        if settings.ecohost_precision_enabled:
+            if server_status.state == ServerState.ACTIVE:
+                logger.info("[Settings] EcoHost Precision enabled - running immediate power mode check")
+                update_ecohost_precision_mode()
+            else:
+                # Server is idle/stopped - set to power_saver to save energy
+                logger.info("[Settings] Server not active - setting power_saver mode")
+                set_windows_power_mode("power_saver")
+                app_settings.current_power_mode = "power_saver"
+    
+    # Save settings to file
+    save_settings_to_file()
+    
+    return {"success": True, "message": "Settings updated"}
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket for real-time updates."""
+    # Check authentication from cookie
+    token = websocket.cookies.get("access_token")
+    if not token:
+        await websocket.close(code=1008, reason="Not authenticated")
+        return
+    
+    token_data = verify_token(token)
+    if not token_data or not token_data.user_id:
+        await websocket.close(code=1008, reason="Invalid token")
+        return
+    
+    user = get_user_by_id(token_data.user_id)
+    if not user or not user.is_active:
+        await websocket.close(code=1008, reason="User not found or inactive")
+        return
+    
+    await websocket.accept()
+    logger.info(f"[WebSocket] Client connected: {user.username} ({user.role.value})")
+
+    try:
+        while True:
+            # Send status update every second
+            cpu, ram = get_system_resources()
+            network = get_network_status()
+            server_status.cpu_usage = cpu
+            server_status.ram_usage = ram
+
+            if server_status.state == ServerState.ACTIVE:
+                server_status.uptime = time.time() - start_time
+
+            # Check console link status
+            console_link = console_controller.is_console_running() if PYWINAUTO_AVAILABLE else False
+
+            # Calculate countdown remaining time
+            countdown_remaining = 0
+            countdown_total = app_settings.auto_shutdown_duration
+            if countdown_active and empty_server_countdown:
+                countdown_remaining = max(0, app_settings.auto_shutdown_duration - (time.time() - empty_server_countdown))
+
+            data = {
+                "state": server_status.state.value,
+                "players": [p.username for p in server_status.players],
+                "cpu_usage": cpu,
+                "ram_usage": ram,
+                "uptime": server_status.uptime,
+                "player_count": len(server_status.players),
+                "max_players": MAX_PLAYERS,
+                "network": network,
+                "console_link": console_link,
+                "server_hung": server_hung,
+                "pywinauto_available": PYWINAUTO_AVAILABLE,
+                "countdown_active": countdown_active,
+                "countdown_remaining": int(countdown_remaining),
+                "countdown_total": countdown_total,
+                "current_power_mode": app_settings.current_power_mode,
+            }
+
+            await websocket.send_json(data)
+            await asyncio.sleep(1)
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+
+
+# =============================================================================
+# Health Check
+# =============================================================================
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "MC-EcoHost"}
+
+
+# =============================================================================
+# Resource Metrics History
+# =============================================================================
+
+# Store resource metrics history (keep last 24 hours = 1440 minutes at 1-min intervals)
+MAX_METRICS_HISTORY = 1440
+resource_metrics_history = []
+
+
+@dataclass
+class ResourceMetrics:
+    timestamp: float
+    cpu_percent: float
+    ram_percent: float
+    ram_used_mb: float
+    ram_total_mb: float
+
+
+def record_resource_metrics():
+    """Record current resource metrics to history."""
+    global resource_metrics_history
+    try:
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        
+        metrics = ResourceMetrics(
+            timestamp=time.time(),
+            cpu_percent=cpu_percent,
+            ram_percent=memory.percent,
+            ram_used_mb=memory.used / (1024 * 1024),
+            ram_total_mb=memory.total / (1024 * 1024)
+        )
+        
+        resource_metrics_history.append(metrics)
+        
+        if len(resource_metrics_history) > MAX_METRICS_HISTORY:
+            resource_metrics_history.pop(0)
+    except Exception as e:
+        logger.error(f"[Metrics] Failed to record resource metrics: {e}")
+
+
+def metrics_recorder():
+    """Background thread to record metrics every minute."""
+    while True:
+        record_resource_metrics()
+        time.sleep(60)
+
+
+metrics_thread = threading.Thread(target=metrics_recorder, daemon=True)
+metrics_thread.start()
+
+
+@app.get("/resources/history", response_model=MetricsHistoryResponse)
+async def get_resource_history(
+    hours: int = 1,
+    current_user: User = require_auth()
+):
+    """Get resource usage history for the specified hours."""
+    try:
+        cutoff_time = time.time() - (hours * 3600)
+        
+        filtered_metrics = [
+            {
+                "timestamp": m.timestamp,
+                "cpu_percent": m.cpu_percent,
+                "ram_percent": m.ram_percent,
+                "ram_used_mb": round(m.ram_used_mb, 1),
+                "ram_total_mb": round(m.ram_total_mb, 1)
+            }
+            for m in resource_metrics_history
+            if m.timestamp >= cutoff_time
+        ]
+        
+        return MetricsHistoryResponse(
+            success=True,
+            metrics=filtered_metrics,
+            message=f"Retrieved {len(filtered_metrics)} data points"
+        )
+    except Exception as e:
+        logger.error(f"[Metrics] Failed to get history: {e}")
+        return MetricsHistoryResponse(
+            success=False,
+            metrics=[],
+            message=f"Failed to get history: {str(e)}"
+        )
+
+
+# =============================================================================
+# Player Statistics Endpoint
+# =============================================================================
+
+
+@app.get("/players/stats", response_model=PlayerStatsResponse)
+async def get_player_statistics_endpoint(current_user: User = require_auth()):
+    """Get all player statistics and history."""
+    try:
+        stats = []
+        current_time = time.time()
+        
+        actual_online_players = {p.username.lower() for p in server_status.players if hasattr(p, 'username')}
+        
+        for username, session in player_sessions.items():
+            is_online = username.lower() in actual_online_players
+            
+            current_session_duration = 0
+            if is_online and session.sessions and session.sessions[-1]["left_at"] is None:
+                current_session_duration = current_time - session.sessions[-1]["joined_at"]
+            elif not is_online and session.sessions and session.sessions[-1]["left_at"] is None:
+                record_player_leave(username)
+            
+            total_playtime = session.total_playtime_seconds + current_session_duration
+            
+            stats.append({
+                "username": username,
+                "is_online": is_online,
+                "join_count": session.join_count,
+                "total_playtime_seconds": round(total_playtime),
+                "total_playtime_formatted": format_duration(total_playtime),
+                "last_seen": session.last_seen,
+                "first_join": session.first_join,
+                "current_session_duration": round(current_session_duration) if is_online else 0
+            })
+        
+        stats.sort(key=lambda x: (-x["is_online"], -x["total_playtime_seconds"]))
+        online_count = sum(1 for p in stats if p["is_online"])
+        
+        return PlayerStatsResponse(
+            success=True,
+            players=stats,
+            online_count=online_count,
+            total_count=len(stats),
+            message=f"Retrieved {len(stats)} players"
+        )
+    except Exception as e:
+        logger.error(f"[PlayerStats] Failed to get statistics: {e}")
+        return PlayerStatsResponse(
+            success=False,
+            players=[],
+            online_count=0,
+            total_count=0,
+            message=f"Failed to get statistics: {str(e)}"
+        )
+
+
+# =============================================================================
+# Player Data Endpoints
+# =============================================================================
+
+
+@app.get("/players/{username}/data", response_model=PlayerDataResponse)
+async def get_player_data(username: str, current_user: User = Depends(require_moderator)):
+    """Get detailed player data (inventory, gamemode, health, level, etc.)"""
+    try:
+        cache_key = username.lower()
+        now = time.time()
+        if cache_key in player_data_cache:
+            cached_time, cached_data = player_data_cache[cache_key]
+            if now - cached_time < PLAYER_DATA_CACHE_TTL:
+                return PlayerDataResponse(
+                    success=True,
+                    username=username,
+                    data=cached_data,
+                    message="From cache"
+                )
+        
+        data = await query_minecraft_player_data(username)
+        
+        if "error" in data:
+            return PlayerDataResponse(
+                success=False,
+                username=username,
+                data={},
+                message=data["error"]
+            )
+        
+        player_data_cache[cache_key] = (now, data)
+        
+        return PlayerDataResponse(
+            success=True,
+            username=username,
+            data=data,
+            message="Data retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"[PlayerData] Endpoint error: {e}")
+        return PlayerDataResponse(
+            success=False,
+            username=username,
+            data={},
+            message=f"Failed to get player data: {str(e)}"
+        )
+
+
+@app.post("/players/{username}/gamemode", response_model=PlayerDataResponse)
+async def set_player_gamemode(
+    username: str,
+    gamemode: str,
+    current_user: User = Depends(require_moderator)
+):
+    """Change player gamemode."""
+    try:
+        if not PYWINAUTO_AVAILABLE or not console_controller.is_console_running():
+            return PlayerDataResponse(
+                success=False,
+                username=username,
+                data={},
+                message="Server console not available"
+            )
+        
+        command = f"gamemode {gamemode} {username}"
+        success = await console_controller.send_command(command)
+        
+        if success:
+            return PlayerDataResponse(
+                success=True,
+                username=username,
+                data={},
+                message=f"Gamemode set to {gamemode}"
+            )
+        else:
+            return PlayerDataResponse(
+                success=False,
+                username=username,
+                data={},
+                message="Failed to send command"
+            )
+    except Exception as e:
+        logger.error(f"[PlayerData] Gamemode change error: {e}")
+        return PlayerDataResponse(
+            success=False,
+            username=username,
+            data={},
+            message=f"Failed to change gamemode: {str(e)}"
+        )
+
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+if __name__ == "__main__":
+    import uvicorn
+    logger.info("Starting MC-EcoHost server on http://localhost:8000")
+    uvicorn.run(app, host="0.0.0.0", port=8000)

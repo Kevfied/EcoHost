@@ -1,0 +1,2647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MC-EcoHost | Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        glass: {
+                            100: 'rgba(255, 255, 255, 0.1)',
+                            200: 'rgba(255, 255, 255, 0.15)',
+                            300: 'rgba(255, 255, 255, 0.2)',
+                        },
+                        status: {
+                            idle: '#f97316',
+                            starting: '#3b82f6',
+                            active: '#22c55e',
+                            stopping: '#eab308',
+                        },
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'glow': 'glow 2s ease-in-out infinite alternate',
+                    },
+                    keyframes: {
+                        glow: {
+                            '0%': { boxShadow: '0 0 20px rgba(249, 115, 22, 0.4)' },
+                            '100%': { boxShadow: '0 0 40px rgba(249, 115, 22, 0.8)' },
+                        },
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            min-height: 100vh;
+            color: #e2e8f0;
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .glass-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .sidebar-item {
+            transition: all 0.3s ease;
+        }
+
+        .sidebar-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateX(4px);
+        }
+
+        .sidebar-item.active {
+            background: rgba(16, 185, 129, 0.2);
+            border-left: 3px solid #10b981;
+        }
+
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        .status-idle {
+            background: linear-gradient(145deg, #1e293b 0%, #0f172a 50%, #334155 100%);
+            box-shadow: 
+                0 0 40px rgba(99, 102, 241, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        }
+
+        .status-starting {
+            background: linear-gradient(145deg, #f97316 0%, #ea580c 50%, #c2410c 100%);
+            box-shadow: 
+                0 0 50px rgba(249, 115, 22, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(249, 115, 22, 0.3);
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+
+        .status-active {
+            background: linear-gradient(145deg, #10b981 0%, #059669 50%, #047857 100%);
+            box-shadow: 
+                0 0 50px rgba(16, 185, 129, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .status-stopping {
+            background: linear-gradient(145deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
+            box-shadow: 
+                0 0 50px rgba(245, 158, 11, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            animation: pulse-glow 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { 
+                box-shadow: 
+                    0 0 50px currentColor,
+                    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+                opacity: 1;
+            }
+            50% { 
+                box-shadow: 
+                    0 0 70px currentColor,
+                    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+                opacity: 0.9;
+            }
+        }
+
+        .power-btn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            transition: all 0.2s ease;
+        }
+
+        .power-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+
+        .power-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .power-btn.active {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+        }
+
+        .power-btn.active:hover:not(:disabled) {
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+
+        .power-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .indicator-online {
+            background: #22c55e;
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+        }
+
+        .indicator-offline {
+            background: #ef4444;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+        }
+
+        .player-card {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .player-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .progress-bar {
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .float-animation {
+            animation: float 3s ease-in-out infinite;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body class="flex">
+    <!-- Sidebar -->
+    <aside class="glass w-64 min-h-screen p-4 flex flex-col">
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold text-orange-400 flex items-center gap-2">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+                </svg>
+                EcoHost
+            </h1>
+            <p class="text-xs text-slate-400 mt-1">Server Management Dashboard</p>
+        </div>
+
+        <nav class="flex-1 space-y-2">
+            <div class="sidebar-item active p-3 rounded-lg cursor-pointer flex items-center gap-3" data-page="dashboard">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+                </svg>
+                <span class="font-medium">Dashboard</span>
+            </div>
+
+            <div class="sidebar-item p-3 rounded-lg cursor-pointer flex items-center gap-3" data-page="players">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+                </svg>
+                <span class="font-medium">Players</span>
+            </div>
+
+            <div class="sidebar-item p-3 rounded-lg cursor-pointer flex items-center gap-3" data-page="resources">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                </svg>
+                <span class="font-medium">Resources</span>
+            </div>
+
+            <div class="sidebar-item p-3 rounded-lg cursor-pointer flex items-center gap-3" data-page="console">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+                <span class="font-medium">Console</span>
+            </div>
+
+            <div class="sidebar-item p-3 rounded-lg cursor-pointer flex items-center gap-3" data-page="settings">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+                <span class="font-medium">Settings</span>
+            </div>
+        </nav>
+
+        <!-- User Info -->
+        <div class="mt-auto pt-4 border-t border-slate-700">
+            <div id="user-info" class="mb-3 p-3 bg-slate-800/50 rounded-lg">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-full bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center text-white font-semibold text-sm">
+                        <span id="user-initial">?</span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p id="user-name" class="text-sm font-medium text-white truncate">Loading...</p>
+                        <span id="user-role" class="text-xs px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 mb-3" id="api-status-sidebar">
+                <div class="indicator indicator-online"></div>
+                <span class="text-xs text-green-400">Connected</span>
+            </div>
+            <button id="logout-btn" class="w-full p-2 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
+                Logout
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 p-6 overflow-y-auto">
+        <!-- Dashboard Page -->
+        <div id="page-dashboard" class="page active">
+            <div class="mb-6">
+                <h2 class="text-3xl font-bold text-white mb-2">Dashboard</h2>
+                <p class="text-slate-400">Server overview and quick actions</p>
+            </div>
+
+            <!-- Server Status Card -->
+            <div class="glass-card rounded-2xl p-6 mb-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">Server Status</h3>
+                    <div id="api-status" class="flex items-center gap-2">
+                        <div class="indicator indicator-online"></div>
+                        <span class="text-sm text-green-400">Connected</span>
+                    </div>
+                </div>
+
+                <!-- Compact Status Control -->
+                <div class="flex items-center gap-6">
+                    <!-- Status Indicator -->
+                    <div id="status-indicator" class="status-idle rounded-full w-24 h-24 flex items-center justify-center shrink-0">
+                        <div class="text-center">
+                            <div id="status-text" class="text-sm font-bold text-white">IDLE</div>
+                        </div>
+                    </div>
+
+                    <!-- Control Section -->
+                    <div class="flex-1 flex items-center gap-4">
+                        <!-- Action Button -->
+                        <button id="power-btn" class="power-btn rounded-lg px-5 py-3 text-white font-medium text-sm flex items-center gap-2 transition-all">
+                            <span id="power-icon">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                            </span>
+                            <span id="power-text">Start</span>
+                        </button>
+
+                        <!-- Quick Stats -->
+                        <div class="flex flex-col gap-2 text-sm">
+                            <div class="flex items-center gap-4">
+                                <div class="flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                    </svg>
+                                    <span id="uptime-quick" class="text-slate-300">--:--:--</span>
+                                </div>
+                                <div class="flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                                    </svg>
+                                    <span id="player-count-quick" class="text-slate-300">0 / 20</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-1.5 text-xs text-slate-500">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                                </svg>
+                                <span>Total: <span id="total-uptime-quick">0h</span></span>
+                                <span class="mx-1">|</span>
+                                <span>Sessions: <span id="session-count-quick">0</span></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Resources -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div class="glass-card rounded-2xl p-6">
+                    <h3 class="text-lg font-semibold text-slate-300 mb-4">System Resources</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <div class="flex justify-between mb-2">
+                                <span class="text-sm text-slate-400">CPU Usage</span>
+                                <span id="cpu-value" class="text-sm text-white font-medium">0%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div id="cpu-bar" class="progress-bar-fill bg-gradient-to-r from-blue-500 to-cyan-500" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-2">
+                                <span class="text-sm text-slate-400">RAM Usage</span>
+                                <span id="ram-value" class="text-sm text-white font-medium">0%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div id="ram-bar" class="progress-bar-fill bg-gradient-to-r from-purple-500 to-pink-500" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card rounded-2xl p-6">
+                    <h3 class="text-lg font-semibold text-slate-300 mb-4">Server Info</h3>
+                    <div class="space-y-3">
+                        <div class="flex justify-between">
+                            <span class="text-sm text-slate-400">Uptime</span>
+                            <span id="uptime" class="text-sm text-white font-medium">--:--:--</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-sm text-slate-400">Players</span>
+                            <span id="player-count" class="text-sm text-white font-medium">0 / 20</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Player Grid -->
+            <div class="glass-card rounded-2xl p-6 mb-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">Online Players</h3>
+                    <span id="player-count-2" class="text-sm text-slate-400">0 / 20</span>
+                </div>
+                <div id="player-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    <div class="col-span-full text-center py-8">
+                        <p class="text-slate-500">No players online</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">Server Logs</h3>
+                    <button id="refresh-logs" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                        Refresh
+                    </button>
+                </div>
+                <div id="log-container" class="bg-slate-900 rounded-xl p-4 h-48 overflow-y-auto font-mono text-xs">
+                    <div class="text-slate-500">Waiting for logs...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Players Page -->
+        <div id="page-players" class="page">
+            <div class="mb-6">
+                <h2 class="text-3xl font-bold text-white mb-2">Player Statistics</h2>
+                <p class="text-slate-400">Track player activity, playtime, and history</p>
+            </div>
+
+            <!-- Stats Overview -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div class="glass-card rounded-2xl p-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center">
+                            <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-sm text-slate-400">Online Players</p>
+                            <p id="stats-online-count" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="glass-card rounded-2xl p-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                            <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-sm text-slate-400">Total Players</p>
+                            <p id="stats-total-count" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="glass-card rounded-2xl p-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                            <svg class="w-6 h-6 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-sm text-slate-400">Total Playtime</p>
+                            <p id="stats-total-playtime" class="text-2xl font-bold text-white">0h</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="mb-6">
+                <div class="relative">
+                    <input type="text" id="player-search" placeholder="Search players..." 
+                        class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pl-11 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <svg class="w-5 h-5 text-slate-500 absolute left-3 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Player List -->
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">Player History</h3>
+                    <button id="refresh-players-btn" class="text-sm text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+                <div id="players-list" class="space-y-3">
+                    <div class="text-center py-12 text-slate-500">
+                        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+                        </svg>
+                        <p>Loading players...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player Detail Modal -->
+        <div id="player-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50">
+            <div class="glass-card rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-xl font-bold text-white">Player Details</h3>
+                    <button id="close-player-modal" class="text-slate-400 hover:text-white transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- Player Header -->
+                <div class="flex items-center gap-4 mb-6">
+                    <img id="player-modal-avatar" src="" alt="" class="w-20 h-20 rounded-xl bg-slate-800">
+                    <div class="flex-1">
+                        <h4 id="player-modal-name" class="text-2xl font-bold text-white">Player</h4>
+                        <div class="flex items-center gap-3 mt-1">
+                            <span id="player-modal-status" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium bg-slate-700 text-slate-300">
+                                <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+                                Offline
+                            </span>
+                            <span id="player-modal-gamemode" class="hidden text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400 font-medium">SURVIVAL</span>
+                        </div>
+                    </div>
+                    <button id="player-refresh-data" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors" title="Refresh player data">
+                        <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Tabs -->
+                <div class="flex gap-1 mb-4 bg-slate-800/50 p-1 rounded-xl">
+                    <button class="player-tab-btn flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors bg-slate-700 text-white" data-tab="overview">
+                        Overview
+                    </button>
+                    <button class="player-tab-btn flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white" data-tab="stats">
+                        Live Stats
+                    </button>
+                    <button class="player-tab-btn flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white" data-tab="inventory">
+                        Inventory
+                    </button>
+                </div>
+
+                <!-- Tab Content: Overview -->
+                <div id="tab-overview" class="player-tab-content">
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div class="bg-slate-800/50 rounded-xl p-4">
+                            <p class="text-xs text-slate-400 mb-1">Total Playtime</p>
+                            <p id="player-modal-playtime" class="text-lg font-bold text-white">--</p>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-xl p-4">
+                            <p class="text-xs text-slate-400 mb-1">Times Joined</p>
+                            <p id="player-modal-joins" class="text-lg font-bold text-white">--</p>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-xl p-4">
+                            <p class="text-xs text-slate-400 mb-1">First Join</p>
+                            <p id="player-modal-first" class="text-sm font-medium text-white">--</p>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-xl p-4">
+                            <p class="text-xs text-slate-400 mb-1">Last Seen</p>
+                            <p id="player-modal-last" class="text-sm font-medium text-white">--</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-800/50 rounded-xl p-4">
+                        <p class="text-xs text-slate-400 mb-2">Current Session</p>
+                        <p id="player-modal-session" class="text-lg font-bold text-green-400">Not online</p>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Live Stats -->
+                <div id="tab-stats" class="player-tab-content hidden">
+                    <div id="live-stats-loading" class="text-center py-8 text-slate-500">
+                        <p>Player must be online to view live stats</p>
+                    </div>
+                    <div id="live-stats-content" class="hidden space-y-4">
+                        <!-- Health & Food -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-slate-800/50 rounded-xl p-4">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <svg class="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                                    </svg>
+                                    <span class="text-sm text-slate-400">Health</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+                                        <div id="player-health-bar" class="h-full bg-red-500 rounded-full" style="width: 0%"></div>
+                                    </div>
+                                    <span id="player-health-text" class="text-sm font-bold text-white">--</span>
+                                </div>
+                            </div>
+                            <div class="bg-slate-800/50 rounded-xl p-4">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <svg class="w-5 h-5 text-orange-400" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M11 18h2v-3h3v-2h-3v-3h-2v3H8v2h3v3zm1-12c4.97 0 9 4.03 9 9s-4.03 9-9 9-9-4.03-9-9 4.03-9 9-9zm0-2C6.48 4 2 8.48 2 14s4.48 10 10 10 10-4.48 10-10S17.52 4 12 4z"/>
+                                    </svg>
+                                    <span class="text-sm text-slate-400">Hunger</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+                                        <div id="player-food-bar" class="h-full bg-orange-500 rounded-full" style="width: 0%"></div>
+                                    </div>
+                                    <span id="player-food-text" class="text-sm font-bold text-white">--</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Level & Position -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-slate-800/50 rounded-xl p-4">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <span class="text-xl">✨</span>
+                                    <span class="text-sm text-slate-400">Experience Level</span>
+                                </div>
+                                <p id="player-level" class="text-2xl font-bold text-green-400">--</p>
+                            </div>
+                            <div class="bg-slate-800/50 rounded-xl p-4">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                    </svg>
+                                    <span class="text-sm text-slate-400">Position</span>
+                                </div>
+                                <p id="player-position" class="text-sm font-mono text-slate-300">--</p>
+                            </div>
+                        </div>
+
+                        <!-- Gamemode Control -->
+                        <div class="bg-slate-800/50 rounded-xl p-4">
+                            <p class="text-xs text-slate-400 mb-3">Change Gamemode</p>
+                            <div class="flex gap-2">
+                                <button class="gamemode-btn flex-1 py-2 px-3 rounded-lg text-sm font-medium bg-slate-700 hover:bg-slate-600 transition-colors" data-gm="survival">
+                                    Survival
+                                </button>
+                                <button class="gamemode-btn flex-1 py-2 px-3 rounded-lg text-sm font-medium bg-slate-700 hover:bg-slate-600 transition-colors" data-gm="creative">
+                                    Creative
+                                </button>
+                                <button class="gamemode-btn flex-1 py-2 px-3 rounded-lg text-sm font-medium bg-slate-700 hover:bg-slate-600 transition-colors" data-gm="adventure">
+                                    Adventure
+                                </button>
+                                <button class="gamemode-btn flex-1 py-2 px-3 rounded-lg text-sm font-medium bg-slate-700 hover:bg-slate-600 transition-colors" data-gm="spectator">
+                                    Spectator
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Inventory -->
+                <div id="tab-inventory" class="player-tab-content hidden">
+                    <div id="inventory-loading" class="text-center py-8 text-slate-500">
+                        <p>Player must be online to view inventory</p>
+                    </div>
+                    <div id="inventory-content" class="hidden">
+                        <div class="flex items-center justify-between mb-4">
+                            <p class="text-sm text-slate-400">Player Inventory</p>
+                            <span id="inventory-count" class="text-xs text-slate-500">0 items</span>
+                        </div>
+                        <div class="flex gap-4">
+                            <!-- Armor Slots (left side) -->
+                            <div class="flex flex-col gap-2 pr-2 border-r border-slate-700">
+                                <div class="text-xs text-slate-500 text-center">Armor</div>
+                                <div id="armor-slots" class="flex flex-col gap-2">
+                                    <!-- Armor slots rendered here -->
+                                </div>
+                            </div>
+                            <!-- Main Inventory + Hotbar (right side) -->
+                            <div class="flex-1">
+                                <div id="inventory-grid" class="grid grid-cols-9 gap-2">
+                                    <!-- Inventory slots will be rendered here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex gap-2 mt-6 pt-4 border-t border-slate-700">
+                    <button id="player-kick-btn" class="flex-1 py-2 px-4 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition-colors font-medium">
+                        Kick Player
+                    </button>
+                    <button id="player-ban-btn" class="flex-1 py-2 px-4 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded-lg transition-colors font-medium">
+                        Ban Player
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Resources Page -->
+        <div id="page-resources" class="page">
+            <div class="mb-6">
+                <h2 class="text-3xl font-bold text-white mb-2">Resource Usage</h2>
+                <p class="text-slate-400">System performance and historical metrics</p>
+            </div>
+
+            <!-- Time Range Selector -->
+            <div class="flex gap-2 mb-6">
+                <button class="resource-time-btn px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-blue-500 text-white" data-hours="1">1 Hour</button>
+                <button class="resource-time-btn px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-slate-700 text-slate-300 hover:bg-slate-600" data-hours="6">6 Hours</button>
+                <button class="resource-time-btn px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-slate-700 text-slate-300 hover:bg-slate-600" data-hours="24">24 Hours</button>
+            </div>
+
+            <!-- Real-time Gauges -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <!-- CPU Gauge -->
+                <div class="glass-card rounded-2xl p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-slate-300">CPU Usage</h3>
+                        <span id="resources-cpu-value" class="text-2xl font-bold text-blue-400">0%</span>
+                    </div>
+                    <div class="relative h-4 bg-slate-700 rounded-full overflow-hidden">
+                        <div id="resources-cpu-bar" class="h-full bg-gradient-to-r from-blue-500 to-cyan-500 transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between mt-2 text-xs text-slate-500">
+                        <span>0%</span>
+                        <span>50%</span>
+                        <span>100%</span>
+                    </div>
+                </div>
+
+                <!-- RAM Gauge -->
+                <div class="glass-card rounded-2xl p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-slate-300">Memory Usage</h3>
+                        <div class="text-right">
+                            <span id="resources-ram-value" class="text-2xl font-bold text-purple-400">0%</span>
+                            <p id="resources-ram-details" class="text-xs text-slate-400">0 / 0 MB</p>
+                        </div>
+                    </div>
+                    <div class="relative h-4 bg-slate-700 rounded-full overflow-hidden">
+                        <div id="resources-ram-bar" class="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between mt-2 text-xs text-slate-500">
+                        <span>0%</span>
+                        <span>50%</span>
+                        <span>100%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Historical Charts -->
+            <div class="glass-card rounded-2xl p-6 mb-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">CPU History</h3>
+                    <span id="cpu-avg" class="text-sm text-slate-400">Avg: --%</span>
+                </div>
+                <div class="h-64 bg-slate-900/50 rounded-xl p-4">
+                    <canvas id="cpu-chart" class="w-full h-full"></canvas>
+                </div>
+            </div>
+
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">Memory History</h3>
+                    <span id="ram-avg" class="text-sm text-slate-400">Avg: --%</span>
+                </div>
+                <div class="h-64 bg-slate-900/50 rounded-xl p-4">
+                    <canvas id="ram-chart" class="w-full h-full"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Console Page -->
+        <div id="page-console" class="page">
+            <div class="mb-6">
+                <h2 class="text-3xl font-bold text-white mb-2">Console</h2>
+                <p class="text-slate-400">Execute server commands and view logs</p>
+            </div>
+
+            <!-- Command Input -->
+            <div class="glass-card rounded-2xl p-6 mb-6">
+                <div class="mb-4">
+                    <label class="text-sm text-slate-400 block mb-2">Command</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="console-input" class="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter command (e.g., /op player)">
+                        <button id="console-send" class="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition-colors">
+                            Send
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Server Logs -->
+            <div class="glass-card rounded-2xl p-6 mb-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">Server Logs</h3>
+                    <button id="refresh-console-logs" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                        Refresh
+                    </button>
+                </div>
+                <div id="console-server-logs" class="bg-slate-900 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs">
+                    <div class="text-slate-500">Server logs will appear here...</div>
+                </div>
+            </div>
+
+            <!-- EcoHost Logs -->
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">EcoHost Logs</h3>
+                    <button id="refresh-console-ecohost-logs" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                        Refresh
+                    </button>
+                </div>
+                <div id="console-ecohost-logs" class="bg-slate-900 rounded-xl p-4 h-48 overflow-y-auto font-mono text-xs">
+                    <div class="text-slate-500">EcoHost logs will appear here...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Page -->
+        <div id="page-settings" class="page">
+            <div class="mb-6">
+                <h2 class="text-3xl font-bold text-white mb-2">Settings</h2>
+                <p class="text-slate-400">Configure EcoHost behavior</p>
+            </div>
+
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-semibold text-slate-300">Settings</h3>
+                    <span id="settings-status" class="text-sm text-green-400 hidden">Saved!</span>
+                </div>
+
+                <div class="space-y-6">
+                    <!-- Auto-Shutdown -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">Auto-Shutdown</h3>
+                            <p class="text-xs text-slate-400 mt-1">Automatically stop server when empty</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="auto-shutdown-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- Auto-Shutdown Duration -->
+                    <div class="p-4 bg-slate-800/50 rounded-xl">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-medium text-white">Shutdown Duration</h3>
+                            <span id="duration-value" class="text-sm text-blue-400">300s</span>
+                        </div>
+                        <input type="range" id="shutdown-duration" min="10" max="3600" value="300" class="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                        <div class="flex justify-between text-xs text-slate-500 mt-2">
+                            <span>10s</span>
+                            <span>3600s (1h)</span>
+                        </div>
+                    </div>
+
+                    <!-- Auto-Start on Ping -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">Auto-Start on Ping</h3>
+                            <p class="text-xs text-slate-400 mt-1">Start server when player tries to join</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="auto-start-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- Power Mode Scheduling -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">Power Mode Scheduling</h3>
+                            <p class="text-xs text-slate-400 mt-1">Auto-switch between High Performance and Power Saver</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="power-schedule-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- EcoHost Precision (BETA) -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl border border-orange-500/30">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">EcoHost Precision <span class="text-xs text-orange-400 font-semibold">(BETA)</span></h3>
+                            <p class="text-xs text-slate-400 mt-1">Smart power mode based on player count</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="ecohost-precision-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-orange-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- Power Mode Time Settings -->
+                    <div class="p-4 bg-slate-800/50 rounded-xl">
+                        <h3 class="text-sm font-medium text-white mb-4">Work Schedule</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-xs text-slate-400 block mb-2">Work Start</label>
+                                <input type="time" id="high-perf-start" value="09:00" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs text-slate-400 block mb-2">Work End</label>
+                                <input type="time" id="high-perf-end" value="22:00" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+                        <div class="mt-4">
+                            <label class="text-xs text-slate-400 block mb-2">Manual Power Mode</label>
+                            <select id="manual-power-mode" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="balanced">Balanced</option>
+                                <option value="power_saver">Power Saver</option>
+                                <option value="high_performance">High Performance</option>
+                                <option value="ultimate_performance">Ultimate Performance</option>
+                            </select>
+                            <p class="text-xs text-slate-500 mt-1">Disables EcoHost Precision and Power Mode Scheduling</p>
+                        </div>
+                        <div class="mt-3 flex items-center justify-between">
+                            <span class="text-xs text-slate-400">Current Power Mode:</span>
+                            <span id="current-power-mode" class="text-sm font-medium text-green-400">Balanced</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- User Management (Admin Only) -->
+                <div id="user-management-section" class="hidden mt-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-slate-300">User Management</h3>
+                        <button id="add-user-btn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm transition-colors">
+                            + Add User
+                        </button>
+                    </div>
+
+                    <!-- Users Table -->
+                    <div class="bg-slate-800/50 rounded-xl overflow-hidden">
+                        <table class="w-full text-sm">
+                            <thead class="bg-slate-700/50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-slate-400 font-medium">Username</th>
+                                    <th class="px-4 py-3 text-left text-slate-400 font-medium">Role</th>
+                                    <th class="px-4 py-3 text-left text-slate-400 font-medium">Status</th>
+                                    <th class="px-4 py-3 text-left text-slate-400 font-medium">Last Login</th>
+                                    <th class="px-4 py-3 text-right text-slate-400 font-medium">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-table-body">
+                                <!-- Users will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Add User Modal -->
+    <div id="add-user-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-md mx-4">
+            <h3 class="text-xl font-bold text-white mb-4">Add New User</h3>
+            <form id="add-user-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Username</label>
+                    <input type="text" id="new-username" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" required minlength="3">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Password</label>
+                    <input type="password" id="new-password" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" required minlength="8" placeholder="Min 8 chars, 1 uppercase, 1 number">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Role</label>
+                    <select id="new-role" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm">
+                        <option value="viewer">Viewer</option>
+                        <option value="moderator">Moderator</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button type="button" id="cancel-add-user" class="flex-1 py-2 px-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors">
+                        Cancel
+                    </button>
+                    <button type="submit" class="flex-1 py-2 px-4 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors">
+                        Add User
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reset Password Modal -->
+    <div id="reset-password-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-md mx-4">
+            <h3 class="text-xl font-bold text-white mb-4">Reset Password</h3>
+            <p class="text-slate-400 text-sm mb-4">Enter a new password for <span id="reset-user-name" class="text-white font-medium"></span></p>
+            <form id="reset-password-form" class="space-y-4">
+                <input type="hidden" id="reset-user-id">
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">New Password</label>
+                    <input type="password" id="reset-password-input" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" required minlength="8" placeholder="Min 8 chars, 1 uppercase, 1 number">
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button type="button" id="cancel-reset-password" class="flex-1 py-2 px-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors">
+                        Cancel
+                    </button>
+                    <button type="submit" class="flex-1 py-2 px-4 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors">
+                        Reset Password
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentState = 'IDLE';
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+
+        // Authentication State
+        let currentUser = null;
+        const userRoles = {
+            ADMIN: 'admin',
+            MODERATOR: 'moderator',
+            VIEWER: 'viewer'
+        };
+
+        // Role-based permissions
+        const permissions = {
+            [userRoles.ADMIN]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_logs', 'change_settings', 'user_management', 'power_mode_control'],
+            [userRoles.MODERATOR]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players'],  // Minecraft focused, no EcoHost logs/settings
+            [userRoles.VIEWER]: ['server_start', 'view_dashboard']  // Can START but NOT stop, console, or logs
+        };
+
+        function hasPermission(permission) {
+            if (!currentUser) return false;
+            return permissions[currentUser.role]?.includes(permission) || false;
+        }
+
+        function isAdmin() {
+            return currentUser?.role === userRoles.ADMIN;
+        }
+
+        function isModeratorOrAbove() {
+            return currentUser?.role === userRoles.ADMIN || currentUser?.role === userRoles.MODERATOR;
+        }
+
+        // Check authentication on load
+        async function checkAuth() {
+            try {
+                const response = await fetch('/auth/verify', {
+                    credentials: 'same-origin'
+                });
+                
+                if (!response.ok) {
+                    window.location.href = '/login.html';
+                    return false;
+                }
+                
+                const data = await response.json();
+                currentUser = data.user;
+                updateUserDisplay();
+                applyRoleBasedUI();
+                return true;
+            } catch (e) {
+                window.location.href = '/login.html';
+                return false;
+            }
+        }
+
+        // Update user info in sidebar
+        function updateUserDisplay() {
+            if (!currentUser) return;
+            
+            document.getElementById('user-name').textContent = currentUser.username;
+            document.getElementById('user-initial').textContent = currentUser.username.charAt(0).toUpperCase();
+            
+            const roleEl = document.getElementById('user-role');
+            roleEl.textContent = currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1);
+            
+            // Color code roles
+            const roleColors = {
+                [userRoles.ADMIN]: 'bg-orange-500/20 text-orange-400',
+                [userRoles.MODERATOR]: 'bg-blue-500/20 text-blue-400',
+                [userRoles.VIEWER]: 'bg-slate-500/20 text-slate-400'
+            };
+            roleEl.className = `text-xs px-2 py-0.5 rounded-full ${roleColors[currentUser.role] || 'bg-slate-700 text-slate-300'}`;
+        }
+
+        // Apply role-based UI restrictions
+        function applyRoleBasedUI() {
+            if (!currentUser) return;
+
+            // Hide console page for viewers (no console_command permission)
+            if (!hasPermission('console_command')) {
+                const consoleNav = document.querySelector('[data-page="console"]');
+                if (consoleNav) consoleNav.style.display = 'none';
+            }
+
+            // Hide settings page for viewers (no change_settings permission)
+            if (!hasPermission('change_settings')) {
+                const settingsNav = document.querySelector('[data-page="settings"]');
+                if (settingsNav) settingsNav.style.display = 'none';
+            }
+
+            // Hide server logs section on dashboard for viewers (no view_logs permission)
+            if (!hasPermission('view_logs')) {
+                // Find the Server Logs card on dashboard (it's a glass-card containing "Server Logs" h3)
+                const dashboardPage = document.getElementById('page-dashboard');
+                if (dashboardPage) {
+                    const allCards = dashboardPage.querySelectorAll('.glass-card');
+                    allCards.forEach(card => {
+                        const heading = card.querySelector('h3');
+                        if (heading && heading.textContent === 'Server Logs') {
+                            card.style.display = 'none';
+                        }
+                    });
+                }
+            }
+
+            // Hide Players and Resources sidebar items for viewers (only Dashboard allowed)
+            if (!hasPermission('view_players')) {
+                const playersNav = document.querySelector('[data-page="players"]');
+                if (playersNav) playersNav.style.display = 'none';
+            }
+            if (!hasPermission('view_logs')) {  // Using view_logs for Resources page too
+                const resourcesNav = document.querySelector('[data-page="resources"]');
+                if (resourcesNav) resourcesNav.style.display = 'none';
+            }
+
+            // Hide EcoHost Logs section on Console page for users without view_logs permission
+            if (!hasPermission('view_logs')) {
+                const consolePage = document.getElementById('page-console');
+                if (consolePage) {
+                    const allCards = consolePage.querySelectorAll('.glass-card');
+                    allCards.forEach(card => {
+                        const heading = card.querySelector('h3');
+                        if (heading && heading.textContent === 'EcoHost Logs') {
+                            card.style.display = 'none';
+                        }
+                    });
+                }
+            }
+
+            // Disable power button for those without ANY power permission
+            if (!hasPermission('server_start') && !hasPermission('server_stop')) {
+                powerBtn.disabled = true;
+                powerBtn.style.opacity = '0.5';
+                powerBtn.style.cursor = 'not-allowed';
+                powerBtn.title = 'Access denied';
+            }
+
+            // Disable settings save for non-admins
+            if (!isAdmin()) {
+                const saveSettingsBtn = document.getElementById('save-settings-btn');
+                if (saveSettingsBtn) {
+                    saveSettingsBtn.disabled = true;
+                    saveSettingsBtn.style.opacity = '0.5';
+                }
+
+                // Disable settings toggles
+                document.querySelectorAll('#page-settings input, #page-settings select').forEach(el => {
+                    if (!el.id?.includes('manual') && !el.id?.includes('power')) {
+                        el.disabled = true;
+                    }
+                });
+            }
+
+            // Show user management for admins
+            if (isAdmin()) {
+                const userMgmtSection = document.getElementById('user-management-section');
+                if (userMgmtSection) {
+                    userMgmtSection.classList.remove('hidden');
+                    loadUsers();
+                }
+            }
+        }
+
+        // Logout functionality
+        async function logout() {
+            try {
+                await fetch('/auth/logout', {
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+            } catch (e) {
+                console.error('Logout error:', e);
+            }
+            window.location.href = '/login.html';
+        }
+
+        // DOM Elements
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const powerBtn = document.getElementById('power-btn');
+        const powerText = document.getElementById('power-text');
+        const powerIcon = document.getElementById('power-icon');
+        const cpuValue = document.getElementById('cpu-value');
+        const cpuBar = document.getElementById('cpu-bar');
+        const ramValue = document.getElementById('ram-value');
+        const ramBar = document.getElementById('ram-bar');
+        const playerGrid = document.getElementById('player-grid');
+        const playerCount = document.getElementById('player-count');
+        const playerCount2 = document.getElementById('player-count-2');
+        const uptime = document.getElementById('uptime');
+        const logContainer = document.getElementById('log-container');
+        const apiStatus = document.getElementById('api-status');
+        const currentPowerMode = document.getElementById('current-power-mode');
+        const manualPowerMode = document.getElementById('manual-power-mode');
+        const ecohostPrecisionToggle = document.getElementById('ecohost-precision-toggle');
+        const powerScheduleToggle = document.getElementById('power-schedule-toggle');
+
+        // Sidebar navigation
+        document.querySelectorAll('.sidebar-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const page = item.dataset.page;
+                
+                // Update sidebar active state
+                document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+                
+                // Update page visibility
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                document.getElementById(`page-${page}`).classList.add('active');
+                
+                // Page-specific initialization
+                if (page === 'players') {
+                    fetchPlayerStats();
+                } else if (page === 'resources') {
+                    fetchResourceHistory();
+                }
+            });
+        });
+
+        // Update UI based on state
+        function updateUI(data) {
+            const state = data.state;
+            currentState = state;
+
+            // Update status indicator (compact w-24 h-24)
+            statusIndicator.className = `status-${state.toLowerCase()} rounded-full w-24 h-24 flex items-center justify-center shrink-0`;
+            statusText.textContent = state;
+
+            // Update power button (Professional three-state system)
+            if (state === 'IDLE') {
+                // OFFLINE: Show START button
+                powerBtn.classList.remove('active');
+                powerText.textContent = 'Start';
+                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+            } else if (state === 'ACTIVE') {
+                // ONLINE: Show STOP button
+                powerBtn.classList.add('active');
+                powerText.textContent = 'Stop';
+                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/>';
+            } else if (state === 'STARTING') {
+                // STARTING: Show STARTING... button (disabled)
+                powerBtn.classList.remove('active');
+                powerText.textContent = 'Starting...';
+                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+            } else {
+                // STOPPING
+                powerBtn.classList.remove('active');
+                powerText.textContent = 'Stopping...';
+                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+            }
+
+            // Disable button during transitions OR if user lacks permission for the current action
+            const canStart = hasPermission('server_start');
+            const canStop = hasPermission('server_stop');
+            const needsStart = state === 'IDLE';
+            const needsStop = state === 'ACTIVE' || state === 'STARTING';
+            
+            const noPermission = (needsStart && !canStart) || (needsStop && !canStop);
+            powerBtn.disabled = state === 'STARTING' || state === 'STOPPING' || noPermission;
+            powerBtn.style.opacity = powerBtn.disabled ? '0.6' : '1';
+            
+            if (noPermission) {
+                powerBtn.title = needsStop ? 'Moderator access required to stop' : 'Access denied';
+            } else {
+                powerBtn.title = '';
+            }
+
+            // Update resources
+            cpuValue.textContent = `${Math.round(data.cpu_usage)}%`;
+            cpuBar.style.width = `${data.cpu_usage}%`;
+            ramValue.textContent = `${Math.round(data.ram_usage)}%`;
+            ramBar.style.width = `${data.ram_usage}%`;
+
+            // Update players
+            const players = data.players || [];
+            const maxPlayers = data.max_players || 20;
+            playerCount.textContent = `${players.length} / ${maxPlayers}`;
+            playerCount2.textContent = `${players.length} / ${maxPlayers}`;
+            
+            // Update quick stats in status bar
+            const quickPlayerCount = document.getElementById('player-count-quick');
+            if (quickPlayerCount) quickPlayerCount.textContent = `${players.length} / ${maxPlayers}`;
+
+            if (players.length > 0) {
+                playerGrid.innerHTML = players.map(player => `
+                    <div class="player-card rounded-xl p-4">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
+                                <span class="text-sm">🎮</span>
+                            </div>
+                            <span class="text-sm font-medium text-white">${player}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                playerGrid.innerHTML = `
+                    <div class="col-span-full text-center py-8">
+                        <p class="text-slate-500">No players online</p>
+                    </div>
+                `;
+            }
+
+            // Update uptime
+            let uptimeStr = '--:--:--';
+            if (data.uptime > 0) {
+                const hours = Math.floor(data.uptime / 3600);
+                const minutes = Math.floor((data.uptime % 3600) / 60);
+                const seconds = Math.floor(data.uptime % 60);
+                uptimeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+            uptime.textContent = uptimeStr;
+            
+            // Update quick uptime in status bar
+            const quickUptime = document.getElementById('uptime-quick');
+            if (quickUptime) quickUptime.textContent = uptimeStr;
+            
+            // Update total uptime (persistent across restarts)
+            const totalUptimeEl = document.getElementById('total-uptime-quick');
+            if (totalUptimeEl && data.total_uptime) {
+                totalUptimeEl.textContent = formatDuration(data.total_uptime);
+            }
+            
+            // Update session count
+            const sessionCountEl = document.getElementById('session-count-quick');
+            if (sessionCountEl && data.session_count !== undefined) {
+                sessionCountEl.textContent = data.session_count;
+            }
+
+            // Update current power mode
+            if (data.current_power_mode) {
+                const modeDisplay = data.current_power_mode.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                currentPowerMode.textContent = modeDisplay;
+                currentPowerMode.className = 'text-sm font-medium ' + 
+                    (data.current_power_mode === 'ultimate_performance' ? 'text-purple-400' : 
+                     data.current_power_mode === 'high_performance' ? 'text-green-400' : 
+                     data.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
+            }
+        }
+
+        // Power button handler
+        powerBtn.addEventListener('click', async () => {
+            if (currentState === 'IDLE') {
+                // Start server - check permission
+                if (!hasPermission('server_start')) {
+                    alert('You do not have permission to start the server');
+                    return;
+                }
+                try {
+                    const response = await fetch('/power/start', { method: 'POST' });
+                    const data = await response.json();
+                    if (!data.success) {
+                        alert(data.message);
+                    }
+                } catch (e) {
+                    console.error('Failed to start:', e);
+                    alert('Failed to connect to API');
+                }
+            } else if (currentState === 'ACTIVE' || currentState === 'STARTING') {
+                // Stop server - check permission
+                if (!hasPermission('server_stop')) {
+                    alert('You do not have permission to stop the server');
+                    return;
+                }
+                try {
+                    const response = await fetch('/power/stop', { method: 'POST' });
+                    const data = await response.json();
+                    if (!data.success) {
+                        alert(data.message);
+                    }
+                } catch (e) {
+                    console.error('Failed to stop:', e);
+                    alert('Failed to connect to API');
+                }
+            }
+        });
+
+        // Fetch logs
+        async function fetchLogs() {
+            try {
+                const response = await fetch('/logs');
+                const data = await response.json();
+                
+                if (data.logs && data.logs.length > 0) {
+                    logContainer.innerHTML = data.logs.slice(-20).map(line => 
+                        `<div class="text-slate-400 hover:text-slate-300 py-0.5">${escapeHtml(line)}</div>`
+                    ).join('');
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                }
+            } catch (e) {
+                console.error('Failed to fetch logs:', e);
+            }
+        }
+
+        // Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Refresh logs button
+        document.getElementById('refresh-logs').addEventListener('click', fetchLogs);
+
+        // Console page elements
+        const consoleInput = document.getElementById('console-input');
+        const consoleSend = document.getElementById('console-send');
+        const consoleServerLogs = document.getElementById('console-server-logs');
+        const consoleEcoHostLogs = document.getElementById('console-ecohost-logs');
+
+        // Send console command
+        async function sendConsoleCommand() {
+            const command = consoleInput.value.trim();
+            if (!command) return;
+
+            try {
+                const response = await fetch('/console/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    consoleInput.value = '';
+                    // Refresh logs after sending command
+                    fetchConsoleLogs();
+                } else {
+                    alert(data.message);
+                }
+            } catch (e) {
+                console.error('Failed to send command:', e);
+                alert('Failed to send command');
+            }
+        }
+
+        consoleSend.addEventListener('click', sendConsoleCommand);
+        consoleInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendConsoleCommand();
+        });
+
+        // Fetch server logs for Console page
+        async function fetchConsoleLogs() {
+            try {
+                const response = await fetch('/logs');
+                const data = await response.json();
+                
+                if (data.logs && data.logs.length > 0) {
+                    consoleServerLogs.innerHTML = data.logs.slice(-30).map(line => 
+                        `<div class="text-slate-400 hover:text-slate-300 py-0.5">${escapeHtml(line)}</div>`
+                    ).join('');
+                    consoleServerLogs.scrollTop = consoleServerLogs.scrollHeight;
+                }
+            } catch (e) {
+                console.error('Failed to fetch console logs:', e);
+            }
+        }
+
+        // Fetch EcoHost logs for Console page
+        async function fetchConsoleEcoHostLogs() {
+            try {
+                const response = await fetch('/ecohost-logs');
+                const data = await response.json();
+                
+                if (data.logs && data.logs.length > 0) {
+                    consoleEcoHostLogs.innerHTML = data.logs.slice(-20).map(line => 
+                        `<div class="text-slate-400 hover:text-slate-300 py-0.5">${escapeHtml(line)}</div>`
+                    ).join('');
+                    consoleEcoHostLogs.scrollTop = consoleEcoHostLogs.scrollHeight;
+                }
+            } catch (e) {
+                console.error('Failed to fetch console EcoHost logs:', e);
+            }
+        }
+
+        // Refresh buttons for Console page logs
+        document.getElementById('refresh-console-logs').addEventListener('click', fetchConsoleLogs);
+        document.getElementById('refresh-console-ecohost-logs').addEventListener('click', fetchConsoleEcoHostLogs);
+
+        // =============================================================================
+        // Resources Page - Charts & Metrics
+        // =============================================================================
+        
+        let currentResourceHours = 1;
+        let resourceUpdateInterval = null;
+
+        // Time range buttons
+        document.querySelectorAll('.resource-time-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.resource-time-btn').forEach(b => {
+                    b.classList.remove('bg-blue-500', 'text-white');
+                    b.classList.add('bg-slate-700', 'text-slate-300');
+                });
+                btn.classList.remove('bg-slate-700', 'text-slate-300');
+                btn.classList.add('bg-blue-500', 'text-white');
+                
+                currentResourceHours = parseInt(btn.dataset.hours);
+                fetchResourceHistory();
+            });
+        });
+
+        async function fetchResourceHistory() {
+            try {
+                const response = await fetch(`/resources/history?hours=${currentResourceHours}`);
+                const data = await response.json();
+                
+                if (data.success && data.metrics.length > 0) {
+                    renderResourceCharts(data.metrics);
+                    updateResourceGauges(data.metrics[data.metrics.length - 1]);
+                    
+                    // Calculate averages
+                    const avgCpu = data.metrics.reduce((sum, m) => sum + m.cpu_percent, 0) / data.metrics.length;
+                    const avgRam = data.metrics.reduce((sum, m) => sum + m.ram_percent, 0) / data.metrics.length;
+                    
+                    document.getElementById('cpu-avg').textContent = `Avg: ${avgCpu.toFixed(1)}%`;
+                    document.getElementById('ram-avg').textContent = `Avg: ${avgRam.toFixed(1)}%`;
+                }
+            } catch (e) {
+                console.error('Failed to fetch resource history:', e);
+            }
+        }
+
+        function updateResourceGauges(latest) {
+            document.getElementById('resources-cpu-value').textContent = `${Math.round(latest.cpu_percent)}%`;
+            document.getElementById('resources-cpu-bar').style.width = `${latest.cpu_percent}%`;
+            
+            document.getElementById('resources-ram-value').textContent = `${Math.round(latest.ram_percent)}%`;
+            document.getElementById('resources-ram-bar').style.width = `${latest.ram_percent}%`;
+            document.getElementById('resources-ram-details').textContent = 
+                `${Math.round(latest.ram_used_mb)} / ${Math.round(latest.ram_total_mb)} MB`;
+        }
+
+        function renderResourceCharts(metrics) {
+            const cpuCanvas = document.getElementById('cpu-chart');
+            const ramCanvas = document.getElementById('ram-chart');
+            
+            if (!cpuCanvas || !ramCanvas) return;
+            
+            const cpuCtx = cpuCanvas.getContext('2d');
+            const ramCtx = ramCanvas.getContext('2d');
+            
+            // Set canvas size
+            const container = cpuCanvas.parentElement;
+            cpuCanvas.width = container.clientWidth;
+            cpuCanvas.height = container.clientHeight;
+            ramCanvas.width = container.clientWidth;
+            ramCanvas.height = container.clientHeight;
+            
+            const width = cpuCanvas.width;
+            const height = cpuCanvas.height;
+            const padding = 20;
+            
+            // Draw CPU chart
+            drawChart(cpuCtx, width, height, padding, metrics, 'cpu_percent', '#3b82f6', '#06b6d4');
+            
+            // Draw RAM chart
+            drawChart(ramCtx, width, height, padding, metrics, 'ram_percent', '#a855f7', '#ec4899');
+        }
+
+        function drawChart(ctx, width, height, padding, data, key, color1, color2) {
+            ctx.clearRect(0, 0, width, height);
+            
+            const chartWidth = width - padding * 2;
+            const chartHeight = height - padding * 2;
+            
+            // Find min/max
+            const values = data.map(d => d[key]);
+            const max = Math.max(...values, 100);
+            const min = 0;
+            
+            // Draw grid lines
+            ctx.strokeStyle = 'rgba(100, 116, 139, 0.2)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = padding + (chartHeight * i / 4);
+                ctx.beginPath();
+                ctx.moveTo(padding, y);
+                ctx.lineTo(width - padding, y);
+                ctx.stroke();
+            }
+            
+            // Draw line
+            if (data.length > 1) {
+                const gradient = ctx.createLinearGradient(0, padding, 0, height - padding);
+                gradient.addColorStop(0, color1 + '40');
+                gradient.addColorStop(1, color1 + '10');
+                
+                ctx.beginPath();
+                ctx.moveTo(padding, height - padding);
+                
+                data.forEach((point, i) => {
+                    const x = padding + (chartWidth * i / (data.length - 1));
+                    const y = padding + chartHeight - ((point[key] - min) / (max - min) * chartHeight);
+                    
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                });
+                
+                ctx.lineTo(width - padding, height - padding);
+                ctx.closePath();
+                ctx.fillStyle = gradient;
+                ctx.fill();
+                
+                // Draw line stroke
+                ctx.beginPath();
+                data.forEach((point, i) => {
+                    const x = padding + (chartWidth * i / (data.length - 1));
+                    const y = padding + chartHeight - ((point[key] - min) / (max - min) * chartHeight);
+                    
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                });
+                
+                ctx.strokeStyle = color1;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+
+        // Update resource gauges from status updates
+        function updateResourcesFromStatus(data) {
+            document.getElementById('resources-cpu-value').textContent = `${Math.round(data.cpu_usage)}%`;
+            document.getElementById('resources-cpu-bar').style.width = `${data.cpu_usage}%`;
+            
+            document.getElementById('resources-ram-value').textContent = `${Math.round(data.ram_usage)}%`;
+            document.getElementById('resources-ram-bar').style.width = `${data.ram_usage}%`;
+        }
+
+        // =============================================================================
+        // Players Page - Statistics & Management
+        // =============================================================================
+        
+        let allPlayers = [];
+        let currentPlayerModal = null;
+
+        async function fetchPlayerStats() {
+            try {
+                const response = await fetch('/players/stats');
+                const data = await response.json();
+                
+                if (data.success) {
+                    allPlayers = data.players;
+                    renderPlayerList(data.players);
+                    updatePlayerStats(data.players, data.online_count);
+                }
+            } catch (e) {
+                console.error('Failed to fetch player stats:', e);
+            }
+        }
+
+        function updatePlayerStats(players, onlineCount) {
+            document.getElementById('stats-online-count').textContent = onlineCount;
+            document.getElementById('stats-total-count').textContent = players.length;
+            
+            const totalPlaytime = players.reduce((sum, p) => sum + p.total_playtime_seconds, 0);
+            document.getElementById('stats-total-playtime').textContent = formatDuration(totalPlaytime);
+        }
+
+        function renderPlayerList(players) {
+            const container = document.getElementById('players-list');
+            const searchTerm = document.getElementById('player-search')?.value.toLowerCase() || '';
+            
+            const filtered = players.filter(p => 
+                p.username.toLowerCase().includes(searchTerm)
+            );
+            
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-12 text-slate-500">
+                        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+                        </svg>
+                        <p>${players.length === 0 ? 'No players yet' : 'No players match your search'}</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = filtered.map(player => `
+                <div class="player-item flex items-center justify-between p-4 bg-slate-800/50 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer" 
+                     data-username="${player.username}">
+                    <div class="flex items-center gap-3">
+                        <img src="https://mc-heads.net/avatar/${player.username}/64" 
+                             alt="${player.username}" 
+                             class="w-12 h-12 rounded-lg bg-slate-700"
+                             onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect fill=%22%2364748b%22 width=%2264%22 height=%2264%22/><text fill=%22white%22 x=%2232%22 y=%2236%22 text-anchor=%22middle%22 font-size=%2224%22>${player.username.charAt(0).toUpperCase()}</text></svg>'">
+                        <div>
+                            <h4 class="font-semibold text-white">${player.username}</h4>
+                            <div class="flex items-center gap-2 text-sm">
+                                <span class="inline-flex items-center gap-1 ${player.is_online ? 'text-green-400' : 'text-slate-400'}">
+                                    <span class="w-2 h-2 rounded-full ${player.is_online ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}"></span>
+                                    ${player.is_online ? 'Online' : 'Offline'}
+                                </span>
+                                <span class="text-slate-500">|</span>
+                                <span class="text-slate-400">${player.total_playtime_formatted}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm text-slate-500">Joined ${player.join_count}x</span>
+                        <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </div>
+                </div>
+            `).join('');
+            
+            // Add click handlers
+            container.querySelectorAll('.player-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const username = item.dataset.username;
+                    const player = allPlayers.find(p => p.username === username);
+                    if (player) openPlayerModal(player);
+                });
+            });
+        }
+
+        function formatDuration(seconds) {
+            if (seconds === null || seconds === undefined || isNaN(seconds)) return '0s';
+            seconds = Math.floor(seconds);
+            if (seconds < 60) return `${seconds}s`;
+            if (seconds < 3600) return `${Math.floor(seconds/60)}m`;
+            if (seconds < 86400) {
+                const hours = Math.floor(seconds/3600);
+                const mins = Math.floor((seconds%3600)/60);
+                return `${hours}h ${mins}m`;
+            }
+            const days = Math.floor(seconds/86400);
+            const hours = Math.floor((seconds%86400)/3600);
+            return `${days}d ${hours}h`;
+        }
+
+        function formatDate(timestamp) {
+            if (!timestamp) return 'Unknown';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        function openPlayerModal(player) {
+            currentPlayerModal = player;
+            const modal = document.getElementById('player-modal');
+            
+            document.getElementById('player-modal-avatar').src = `https://mc-heads.net/avatar/${player.username}/128`;
+            document.getElementById('player-modal-name').textContent = player.username;
+            
+            const statusEl = document.getElementById('player-modal-status');
+            if (player.is_online) {
+                statusEl.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium bg-green-500/20 text-green-400';
+                statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>Online';
+            } else {
+                statusEl.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium bg-slate-700 text-slate-400';
+                statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-500"></span>Offline';
+            }
+            
+            document.getElementById('player-modal-playtime').textContent = player.total_playtime_formatted;
+            document.getElementById('player-modal-joins').textContent = player.join_count + ' times';
+            document.getElementById('player-modal-first').textContent = formatDate(player.first_join);
+            document.getElementById('player-modal-last').textContent = formatDate(player.last_seen);
+            
+            const sessionEl = document.getElementById('player-modal-session');
+            if (player.is_online) {
+                sessionEl.textContent = formatDuration(player.current_session_duration);
+                sessionEl.className = 'text-lg font-bold text-green-400';
+            } else {
+                sessionEl.textContent = 'Not online';
+                sessionEl.className = 'text-lg font-bold text-slate-500';
+            }
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closePlayerModal() {
+            const modal = document.getElementById('player-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            currentPlayerModal = null;
+        }
+
+        // Event listeners
+        document.getElementById('close-player-modal').addEventListener('click', closePlayerModal);
+        document.getElementById('player-modal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closePlayerModal();
+        });
+
+        document.getElementById('player-search').addEventListener('input', () => {
+            renderPlayerList(allPlayers);
+        });
+
+        document.getElementById('refresh-players-btn').addEventListener('click', fetchPlayerStats);
+
+        // Player management buttons
+        document.getElementById('player-kick-btn').addEventListener('click', async () => {
+            if (!currentPlayerModal) return;
+            if (!confirm(`Kick ${currentPlayerModal.username}?`)) return;
+            
+            try {
+                const response = await fetch('/console/command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: `kick ${currentPlayerModal.username}`})
+                });
+                const data = await response.json();
+                if (data.success) {
+                    alert(`Kicked ${currentPlayerModal.username}`);
+                } else {
+                    alert('Failed to kick: ' + data.message);
+                }
+            } catch (e) {
+                alert('Failed to send kick command');
+            }
+        });
+
+        document.getElementById('player-ban-btn').addEventListener('click', async () => {
+            if (!currentPlayerModal) return;
+            if (!confirm(`Ban ${currentPlayerModal.username}?`)) return;
+            
+            try {
+                const response = await fetch('/console/command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: `ban ${currentPlayerModal.username}`})
+                });
+                const data = await response.json();
+                if (data.success) {
+                    alert(`Banned ${currentPlayerModal.username}`);
+                } else {
+                    alert('Failed to ban: ' + data.message);
+                }
+            } catch (e) {
+                alert('Failed to send ban command');
+            }
+        });
+
+        // =============================================================================
+        // Player Modal - Tabs & Data
+        // =============================================================================
+        
+        let currentPlayerData = null;
+        let playerModalInterval = null;
+        let playerHistoryInterval = null;
+
+        // Tab switching
+        document.querySelectorAll('.player-tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+                
+                // Update button styles
+                document.querySelectorAll('.player-tab-btn').forEach(b => {
+                    b.classList.remove('bg-slate-700', 'text-white');
+                    b.classList.add('text-slate-400');
+                });
+                btn.classList.remove('text-slate-400');
+                btn.classList.add('bg-slate-700', 'text-white');
+                
+                // Show/hide content
+                document.querySelectorAll('.player-tab-content').forEach(c => c.classList.add('hidden'));
+                document.getElementById(`tab-${tab}`).classList.remove('hidden');
+                
+                // Load data if needed
+                if (tab === 'stats' || tab === 'inventory') {
+                    if (currentPlayerModal && currentPlayerModal.is_online) {
+                        fetchPlayerLiveData(currentPlayerModal.username);
+                    }
+                }
+            });
+        });
+
+        // Refresh button
+        document.getElementById('player-refresh-data').addEventListener('click', () => {
+            if (currentPlayerModal && currentPlayerModal.is_online) {
+                fetchPlayerLiveData(currentPlayerModal.username);
+            }
+        });
+
+        // Gamemode buttons
+        document.querySelectorAll('.gamemode-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (!currentPlayerModal) return;
+                const gamemode = btn.dataset.gm;
+                
+                try {
+                    const response = await fetch(`/players/${currentPlayerModal.username}/gamemode?gamemode=${gamemode}`, {
+                        method: 'POST'
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        alert(`Changed ${currentPlayerModal.username} to ${gamemode} mode`);
+                        fetchPlayerLiveData(currentPlayerModal.username);
+                    } else {
+                        alert('Failed: ' + data.message);
+                    }
+                } catch (e) {
+                    alert('Failed to change gamemode');
+                }
+            });
+        });
+
+        async function fetchPlayerLiveData(username) {
+            try {
+                const response = await fetch(`/players/${username}/data`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentPlayerData = data.data;
+                    renderPlayerLiveData(data.data);
+                }
+            } catch (e) {
+                console.error('Failed to fetch player data:', e);
+            }
+        }
+
+        function renderPlayerLiveData(data) {
+            // Handle offline players - show session history instead of live stats
+            if (!data.online) {
+                const loadingEl = document.getElementById('live-stats-loading');
+                const contentEl = document.getElementById('live-stats-content');
+                const invLoadingEl = document.getElementById('inventory-loading');
+                const invContentEl = document.getElementById('inventory-content');
+                
+                // Check if we have session history
+                if (data.session_history) {
+                    loadingEl.innerHTML = `
+                        <div class="text-center py-4">
+                            <p class="text-slate-400 mb-3">Player is offline</p>
+                            <div class="bg-slate-800/50 rounded-xl p-4 text-left space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="text-slate-400 text-sm">Total Playtime:</span>
+                                    <span class="text-white font-medium">${formatDuration(data.session_history.total_playtime_seconds)}</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-slate-400 text-sm">Times Joined:</span>
+                                    <span class="text-white font-medium">${data.session_history.join_count}</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-slate-400 text-sm">Last Seen:</span>
+                                    <span class="text-white font-medium">${formatDate(data.session_history.last_seen)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    loadingEl.innerHTML = `
+                        <div class="text-center py-4">
+                            <p class="text-slate-400">Player is offline</p>
+                            <p class="text-xs text-slate-500 mt-2">No session data available</p>
+                        </div>
+                    `;
+                }
+                
+                loadingEl.classList.remove('hidden');
+                contentEl.classList.add('hidden');
+                
+                invLoadingEl.innerHTML = '<p class="text-slate-400">Inventory not available while offline</p>';
+                invLoadingEl.classList.remove('hidden');
+                invContentEl.classList.add('hidden');
+                
+                // Hide gamemode badge for offline players
+                document.getElementById('player-modal-gamemode').classList.add('hidden');
+                return;
+            }
+            
+            // Show content for online players
+            document.getElementById('live-stats-loading').classList.add('hidden');
+            document.getElementById('live-stats-content').classList.remove('hidden');
+            document.getElementById('inventory-loading').classList.add('hidden');
+            document.getElementById('inventory-content').classList.remove('hidden');
+            
+            // Reset loading messages
+            document.getElementById('live-stats-loading').innerHTML = '<p>Player must be online to view live stats</p>';
+            document.getElementById('inventory-loading').innerHTML = '<p>Player must be online to view inventory</p>';
+            
+            // Update gamemode badge
+            const gmBadge = document.getElementById('player-modal-gamemode');
+            if (data.gamemode) {
+                gmBadge.textContent = data.gamemode.toUpperCase();
+                gmBadge.classList.remove('hidden');
+            } else {
+                gmBadge.classList.add('hidden');
+            }
+            
+            // Health bar
+            const healthPercent = Math.min((data.health / 20) * 100, 100);
+            document.getElementById('player-health-bar').style.width = `${healthPercent}%`;
+            document.getElementById('player-health-text').textContent = `${Math.round(data.health)}/20`;
+            
+            // Food bar
+            const foodPercent = Math.min((data.food / 20) * 100, 100);
+            document.getElementById('player-food-bar').style.width = `${foodPercent}%`;
+            document.getElementById('player-food-text').textContent = `${data.food}/20`;
+            
+            // Level
+            document.getElementById('player-level').textContent = data.level || 0;
+            
+            // Position
+            if (data.position) {
+                document.getElementById('player-position').textContent = 
+                    `X: ${data.position.x}, Y: ${data.position.y}, Z: ${data.position.z}`;
+            }
+            
+            // Inventory
+            renderInventory(data.inventory || []);
+        }
+
+        function renderInventory(items) {
+            const grid = document.getElementById('inventory-grid');
+            const armorGrid = document.getElementById('armor-slots');
+            
+            console.log('[Inventory] Rendering', items.length, 'items:', items);
+            
+            document.getElementById('inventory-count').textContent = `${items.length} items`;
+            
+            // Clear grids
+            grid.innerHTML = '';
+            armorGrid.innerHTML = '';
+            
+            if (!items || items.length === 0) {
+                grid.innerHTML = '<div class="col-span-9 text-center text-slate-500 py-4">Inventory is empty</div>';
+                return;
+            }
+            
+            // === MAIN INVENTORY (slots 9-35) - 9 columns x 3 rows ===
+            // Label
+            const invLabel = document.createElement('div');
+            invLabel.className = 'col-span-9 text-xs text-slate-500 mb-1';
+            invLabel.textContent = 'Inventory';
+            grid.appendChild(invLabel);
+            
+            // Main inventory slots (27 slots: 9-35)
+            for (let row = 0; row < 3; row++) {
+                for (let col = 0; col < 9; col++) {
+                    const slotNum = 9 + (row * 9) + col;
+                    const item = items.find(it => it.slot === slotNum);
+                    if (item) console.log('[Inventory] Main slot', slotNum, ':', item.id);
+                    grid.appendChild(createInventorySlot(item, slotNum));
+                }
+            }
+            
+            // === HOTBAR (slots 0-8) - 9 columns at bottom ===
+            // Label
+            const hotbarLabel = document.createElement('div');
+            hotbarLabel.className = 'col-span-9 text-xs text-slate-500 mb-1 mt-2';
+            hotbarLabel.textContent = 'Hotbar';
+            grid.appendChild(hotbarLabel);
+            
+            // Hotbar slots (9 slots: 0-8)
+            for (let i = 0; i < 9; i++) {
+                const item = items.find(it => it.slot === i);
+                if (item) console.log('[Inventory] Hotbar slot', i, ':', item.id);
+                grid.appendChild(createInventorySlot(item, i));
+            }
+            
+            // === ARMOR SLOTS (slots 103, 102, 101, 100) - Helmet, Chestplate, Leggings, Boots ===
+            const armorOrder = [103, 102, 101, 100]; // Top to bottom: Helmet, Chestplate, Leggings, Boots
+            const armorNames = ['Helmet', 'Chest', 'Legs', 'Boots'];
+            
+            console.log('[Inventory] Armor items check:', items.filter(it => it.slot >= 100 && it.slot <= 103));
+            
+            for (let i = 0; i < 4; i++) {
+                const slotNum = armorOrder[i];
+                const item = items.find(it => it.slot === slotNum);
+                console.log('[Inventory] Armor slot', slotNum, '(' + armorNames[i] + '):', item ? item.id : 'empty');
+                const slot = createInventorySlot(item, slotNum);
+                slot.title = armorNames[i] + (item ? `: ${item.id}` : ': Empty');
+                armorGrid.appendChild(slot);
+            }
+        }
+
+        function createInventorySlot(item, slotNum) {
+            const slot = document.createElement('div');
+            slot.className = 'w-8 h-8 sm:w-9 sm:h-9 bg-slate-800 rounded border border-slate-700 flex items-center justify-center relative cursor-pointer';
+            
+            if (item) {
+                // Show item image from items folder
+                const img = getItemImage(item.id);
+                slot.innerHTML = `
+                    ${img}
+                    ${item.count > 1 ? `<span class="absolute bottom-0 right-0.5 text-[10px] leading-none text-white font-bold shadow-sm">${item.count}</span>` : ''}
+                `;
+                
+                // Create sleek tooltip
+                const tooltip = document.createElement('div');
+                tooltip.className = 'fixed hidden z-50 px-3 py-2 bg-slate-800/90 backdrop-blur-md border border-slate-600 rounded-lg shadow-xl pointer-events-none';
+                tooltip.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span class="w-6 h-6 flex items-center justify-center">${getItemIcon(item.id)}</span>
+                        <div>
+                            <div class="text-sm font-semibold text-white capitalize">${formatItemName(item.id)}</div>
+                            <div class="text-xs text-slate-400">Slot ${slotNum} • x${item.count}</div>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(tooltip);
+                
+                // Hover delay logic
+                let hoverTimeout;
+                slot.addEventListener('mouseenter', (e) => {
+                    hoverTimeout = setTimeout(() => {
+                        const rect = slot.getBoundingClientRect();
+                        tooltip.style.left = `${rect.left + rect.width / 2 - 60}px`;
+                        tooltip.style.top = `${rect.top - 50}px`;
+                        tooltip.classList.remove('hidden');
+                    }, 1000);
+                });
+                
+                slot.addEventListener('mouseleave', () => {
+                    clearTimeout(hoverTimeout);
+                    tooltip.classList.add('hidden');
+                });
+            }
+            
+            return slot;
+        }
+
+        function formatItemName(itemId) {
+            return itemId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+
+        function getItemIcon(itemId) {
+            const cleanId = itemId.replace('minecraft:', '');
+            return `<img src="items/${cleanId}.png" class="w-5 h-5 object-contain" onerror="this.style.display='none'; this.parentElement.innerHTML = '<span class=\\'text-sm\\'>❓</span>';">`;
+        }
+
+        function getItemImage(itemId) {
+            // Convert item ID to filename (Minecraft uses minecraft:item_id format)
+            // Strip minecraft: prefix if present
+            const cleanId = itemId.replace('minecraft:', '');
+            const imgPath = `items/${cleanId}.png`;
+            
+            // Debug logging
+            console.log(`[Inventory] Loading item: ${itemId} -> ${imgPath}`);
+            
+            // Return image tag with fallback on error
+            return `<img src="${imgPath}" 
+                alt="${cleanId}" 
+                class="w-6 h-6 sm:w-7 sm:h-7 object-contain"
+                onerror="console.error('[Inventory] Failed to load:', this.src, 'for item:', '${itemId}'); this.style.display='none'; this.parentElement.innerHTML = '<span class=\\'text-lg\\'>❓</span>';"
+                loading="lazy">`;
+        }
+
+        // Auto-refresh player history every minute
+        function startPlayerHistoryRefresh() {
+            // Refresh immediately when on players page
+            fetchPlayerStats();
+            
+            // Set up interval
+            playerHistoryInterval = setInterval(() => {
+                // Only refresh if players page is visible
+                const playersPage = document.getElementById('page-players');
+                if (playersPage && playersPage.classList.contains('active')) {
+                    fetchPlayerStats();
+                }
+            }, 60000); // Every 60 seconds
+        }
+
+        // Manual refresh only - no auto-refresh
+        function stopPlayerDataRefresh() {
+            // Kept for compatibility with existing close handlers
+            if (playerModalInterval) {
+                clearInterval(playerModalInterval);
+                playerModalInterval = null;
+            }
+        }
+
+        // Update openPlayerModal to start data refresh
+        const originalOpenPlayerModal = openPlayerModal;
+        window.openPlayerModal = function(player) {
+            originalOpenPlayerModal(player);
+            if (player.is_online) {
+                fetchPlayerLiveData(player.username);
+            }
+        };
+
+        // Update closePlayerModal wrapper
+        const originalClosePlayerModal = closePlayerModal;
+        window.closePlayerModal = function() {
+            stopPlayerDataRefresh();
+            originalClosePlayerModal();
+        };
+
+        // Start history refresh when page loads
+        startPlayerHistoryRefresh();
+
+        // WebSocket connection
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            try {
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    reconnectAttempts = 0;
+                    apiStatus.innerHTML = `
+                        <div class="indicator indicator-online"></div>
+                        <span class="text-sm text-green-400">Connected</span>
+                    `;
+                };
+
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    updateUI(data);
+                    updateResourcesFromStatus(data);
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    apiStatus.innerHTML = `
+                        <div class="indicator indicator-offline"></div>
+                        <span class="text-sm text-red-400">Disconnected</span>
+                    `;
+                    
+                    // Reconnect
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        setTimeout(connectWebSocket, 2000 * reconnectAttempts);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                };
+            } catch (e) {
+                console.error('WebSocket connection failed:', e);
+            }
+        }
+
+        // Initial fetch
+        async function fetchInitialStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                updateUI(data);
+            } catch (e) {
+                console.error('Failed to fetch status:', e);
+                apiStatus.innerHTML = `
+                    <div class="indicator indicator-offline"></div>
+                    <span class="text-sm text-red-400">API Unavailable</span>
+                `;
+            }
+        }
+
+        // Logout button handler
+        document.getElementById('logout-btn').addEventListener('click', logout);
+
+        // User Management Functions (Admin Only)
+        async function loadUsers() {
+            if (!isAdmin()) return;
+            
+            try {
+                const response = await fetch('/users', {
+                    credentials: 'same-origin'
+                });
+                
+                if (!response.ok) throw new Error('Failed to load users');
+                
+                const users = await response.json();
+                renderUsersTable(users);
+            } catch (e) {
+                console.error('Failed to load users:', e);
+            }
+        }
+
+        function renderUsersTable(users) {
+            const tbody = document.getElementById('users-table-body');
+            tbody.innerHTML = users.map(user => {
+                const lastLogin = user.last_login 
+                    ? new Date(user.last_login * 1000).toLocaleString() 
+                    : 'Never';
+                
+                const roleColors = {
+                    'admin': 'text-orange-400',
+                    'moderator': 'text-blue-400',
+                    'viewer': 'text-slate-400'
+                };
+                
+                const statusBadge = user.is_active 
+                    ? '<span class="text-green-400">Active</span>'
+                    : '<span class="text-red-400">Disabled</span>';
+                
+                const requirePasswordChange = user.require_password_change 
+                    ? '<span class="text-xs text-orange-400 ml-1">(change required)</span>' 
+                    : '';
+                
+                return `
+                    <tr class="border-b border-slate-700/50 hover:bg-slate-700/30">
+                        <td class="px-4 py-3 text-white">
+                            ${user.username}${requirePasswordChange}
+                        </td>
+                        <td class="px-4 py-3 ${roleColors[user.role] || 'text-slate-400'} capitalize">
+                            ${user.role}
+                        </td>
+                        <td class="px-4 py-3">${statusBadge}</td>
+                        <td class="px-4 py-3 text-slate-400 text-xs">${lastLogin}</td>
+                        <td class="px-4 py-3 text-right">
+                            ${user.id !== currentUser?.id ? `
+                                <button onclick="resetPassword('${user.id}', '${user.username}')" 
+                                    class="text-orange-400 hover:text-orange-300 text-xs mr-3">
+                                    Reset Password
+                                </button>
+                                <button onclick="toggleUserStatus('${user.id}', ${!user.is_active})" 
+                                    class="${user.is_active ? 'text-red-400 hover:text-red-300' : 'text-green-400 hover:text-green-300'} text-xs mr-3">
+                                    ${user.is_active ? 'Disable' : 'Enable'}
+                                </button>
+                                <button onclick="changeUserRole('${user.id}', '${user.role}')" 
+                                    class="text-blue-400 hover:text-blue-300 text-xs mr-3">
+                                    Change Role
+                                </button>
+                                <button onclick="deleteUser('${user.id}')" 
+                                    class="text-red-400 hover:text-red-300 text-xs">
+                                    Delete
+                                </button>
+                            ` : '<span class="text-slate-500 text-xs">(You)</span>'}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Add User Modal
+        const addUserModal = document.getElementById('add-user-modal');
+        document.getElementById('add-user-btn').addEventListener('click', () => {
+            addUserModal.classList.remove('hidden');
+            addUserModal.classList.add('flex');
+        });
+        document.getElementById('cancel-add-user').addEventListener('click', () => {
+            addUserModal.classList.add('hidden');
+            addUserModal.classList.remove('flex');
+        });
+
+        document.getElementById('add-user-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('new-username').value;
+            const password = document.getElementById('new-password').value;
+            const role = document.getElementById('new-role').value;
+            
+            try {
+                const response = await fetch('/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ username, password, role })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addUserModal.classList.add('hidden');
+                    addUserModal.classList.remove('flex');
+                    document.getElementById('add-user-form').reset();
+                    loadUsers();
+                } else {
+                    alert(data.detail || 'Failed to create user');
+                }
+            } catch (e) {
+                alert('Network error');
+            }
+        });
+
+        // Reset Password Modal
+        const resetPasswordModal = document.getElementById('reset-password-modal');
+        window.resetPassword = (userId, username) => {
+            document.getElementById('reset-user-id').value = userId;
+            document.getElementById('reset-user-name').textContent = username;
+            resetPasswordModal.classList.remove('hidden');
+            resetPasswordModal.classList.add('flex');
+        };
+        document.getElementById('cancel-reset-password').addEventListener('click', () => {
+            resetPasswordModal.classList.add('hidden');
+            resetPasswordModal.classList.remove('flex');
+        });
+
+        document.getElementById('reset-password-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const userId = document.getElementById('reset-user-id').value;
+            const newPassword = document.getElementById('reset-password-input').value;
+            
+            try {
+                const response = await fetch(`/users/${userId}/password?new_password=${encodeURIComponent(newPassword)}`, {
+                    method: 'PUT',
+                    credentials: 'same-origin'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resetPasswordModal.classList.add('hidden');
+                    resetPasswordModal.classList.remove('flex');
+                    document.getElementById('reset-password-form').reset();
+                    loadUsers();
+                } else {
+                    alert(data.detail || 'Failed to reset password');
+                }
+            } catch (e) {
+                alert('Network error');
+            }
+        });
+
+        // User actions
+        window.toggleUserStatus = async (userId, enable) => {
+            if (!confirm(`Are you sure you want to ${enable ? 'enable' : 'disable'} this user?`)) return;
+            
+            try {
+                const response = await fetch(`/users/${userId}/status?is_active=${enable}`, {
+                    method: 'PUT',
+                    credentials: 'same-origin'
+                });
+                
+                if (response.ok) {
+                    loadUsers();
+                } else {
+                    alert('Failed to update user status');
+                }
+            } catch (e) {
+                alert('Network error');
+            }
+        };
+
+        window.changeUserRole = async (userId, currentRole) => {
+            const roles = ['admin', 'moderator', 'viewer'];
+            const newRole = prompt(`Enter new role (${roles.join(', ')}):`, currentRole);
+            
+            if (!newRole || newRole === currentRole) return;
+            if (!roles.includes(newRole)) {
+                alert('Invalid role');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/users/${userId}/role?role=${newRole}`, {
+                    method: 'PUT',
+                    credentials: 'same-origin'
+                });
+                
+                if (response.ok) {
+                    loadUsers();
+                } else {
+                    alert('Failed to update role');
+                }
+            } catch (e) {
+                alert('Network error');
+            }
+        };
+
+        window.deleteUser = async (userId) => {
+            if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
+            
+            try {
+                const response = await fetch(`/users/${userId}`, {
+                    method: 'DELETE',
+                    credentials: 'same-origin'
+                });
+                
+                if (response.ok) {
+                    loadUsers();
+                } else {
+                    alert('Failed to delete user');
+                }
+            } catch (e) {
+                alert('Network error');
+            }
+        };
+
+        // Initialize
+        checkAuth().then(authenticated => {
+            if (authenticated) {
+                fetchInitialStatus();
+                fetchLogs();
+                fetchConsoleLogs();
+                fetchConsoleEcoHostLogs();
+                connectWebSocket();
+            }
+        });
+
+        // Periodic log refresh
+        setInterval(fetchLogs, 5000);
+        setInterval(fetchConsoleLogs, 5000);
+        setInterval(fetchConsoleEcoHostLogs, 5000);
+
+        // Settings functionality
+        const autoShutdownToggle = document.getElementById('auto-shutdown-toggle');
+        const shutdownDuration = document.getElementById('shutdown-duration');
+        const durationValue = document.getElementById('duration-value');
+        const autoStartToggle = document.getElementById('auto-start-toggle');
+        const highPerfStart = document.getElementById('high-perf-start');
+        const highPerfEnd = document.getElementById('high-perf-end');
+        const settingsStatus = document.getElementById('settings-status');
+
+        // Load settings on page load
+        async function loadSettings() {
+            try {
+                const response = await fetch('/settings');
+                const data = await response.json();
+                
+                autoShutdownToggle.checked = data.auto_shutdown_enabled;
+                shutdownDuration.value = data.auto_shutdown_duration;
+                durationValue.textContent = `${data.auto_shutdown_duration}s`;
+                autoStartToggle.checked = data.auto_start_on_ping;
+                powerScheduleToggle.checked = data.power_mode_scheduling_enabled;
+                ecohostPrecisionToggle.checked = data.ecohost_precision_enabled;
+                highPerfStart.value = data.high_performance_start;
+                highPerfEnd.value = data.high_performance_end;
+                
+                // Update power mode display
+                const modeMap = {
+                    'ultimate_performance': 'Ultimate Performance',
+                    'high_performance': 'High Performance',
+                    'power_saver': 'Power Saver',
+                    'balanced': 'Balanced'
+                };
+                currentPowerMode.textContent = modeMap[data.current_power_mode] || 'Balanced';
+                currentPowerMode.className = 'text-sm font-medium ' + 
+                    (data.current_power_mode === 'ultimate_performance' ? 'text-purple-400' : 
+                     data.current_power_mode === 'high_performance' ? 'text-green-400' : 
+                     data.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
+                
+                // Update manual power mode dropdown to match current power mode
+                manualPowerMode.value = data.current_power_mode || 'balanced';
+            } catch (e) {
+                console.error('Failed to load settings:', e);
+            }
+        }
+
+        // Save settings
+        async function saveSettings() {
+            try {
+                const response = await fetch('/settings', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        auto_shutdown_enabled: autoShutdownToggle.checked,
+                        auto_shutdown_duration: parseInt(shutdownDuration.value),
+                        auto_start_on_ping: autoStartToggle.checked,
+                        power_mode_scheduling_enabled: powerScheduleToggle.checked,
+                        ecohost_precision_enabled: ecohostPrecisionToggle.checked,
+                        high_performance_start: highPerfStart.value,
+                        high_performance_end: highPerfEnd.value
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    settingsStatus.classList.remove('hidden');
+                    setTimeout(() => settingsStatus.classList.add('hidden'), 2000);
+                } else {
+                    alert(data.message);
+                }
+            } catch (e) {
+                console.error('Failed to save settings:', e);
+                alert('Failed to save settings');
+            }
+        }
+
+        // Manual power mode handler
+        manualPowerMode.addEventListener('change', async () => {
+            const mode = manualPowerMode.value;
+            try {
+                const response = await fetch('/power/mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    console.log(`Power mode set to ${mode}`);
+                    // Fetch updated settings to reflect disabled auto modes
+                    const settingsResponse = await fetch('/settings');
+                    const settingsData = await settingsResponse.json();
+                    // Update UI toggles to show auto modes are disabled
+                    ecohostPrecisionToggle.checked = settingsData.ecohost_precision_enabled;
+                    powerScheduleToggle.checked = settingsData.power_mode_scheduling_enabled;
+                    // Update current power mode text and color
+                    const modeMap = {
+                        'ultimate_performance': 'Ultimate Performance',
+                        'high_performance': 'High Performance',
+                        'power_saver': 'Power Saver',
+                        'balanced': 'Balanced'
+                    };
+                    currentPowerMode.textContent = modeMap[settingsData.current_power_mode] || 'Balanced';
+                    currentPowerMode.className = 'text-sm font-medium ' + 
+                        (settingsData.current_power_mode === 'ultimate_performance' ? 'text-purple-400' : 
+                         settingsData.current_power_mode === 'high_performance' ? 'text-green-400' : 
+                         settingsData.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
+                } else {
+                    alert(data.message);
+                }
+            } catch (e) {
+                console.error('Failed to set power mode:', e);
+                alert('Failed to set power mode');
+            }
+        });
+
+        // Event listeners for settings
+        autoShutdownToggle.addEventListener('change', saveSettings);
+        autoStartToggle.addEventListener('change', saveSettings);
+        powerScheduleToggle.addEventListener('change', saveSettings);
+        ecohostPrecisionToggle.addEventListener('change', saveSettings);
+        highPerfStart.addEventListener('change', saveSettings);
+        highPerfEnd.addEventListener('change', saveSettings);
+        
+        shutdownDuration.addEventListener('input', () => {
+            durationValue.textContent = `${shutdownDuration.value}s`;
+        });
+        
+        shutdownDuration.addEventListener('change', saveSettings);
+
+        // Load settings on initialization
+        loadSettings();
+    </script>
+</body>
+</html>

@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MC-EcoHost | Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        glass: {
+                            100: 'rgba(255, 255, 255, 0.1)',
+                            200: 'rgba(255, 255, 255, 0.15)',
+                            300: 'rgba(255, 255, 255, 0.2)',
+                        },
+                        status: {
+                            idle: '#f97316',
+                            starting: '#3b82f6',
+                            active: '#22c55e',
+                            stopping: '#eab308',
+                        },
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'glow': 'glow 2s ease-in-out infinite alternate',
+                    },
+                    keyframes: {
+                        glow: {
+                            '0%': { boxShadow: '0 0 20px rgba(249, 115, 22, 0.4)' },
+                            '100%': { boxShadow: '0 0 40px rgba(249, 115, 22, 0.8)' },
+                        },
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            min-height: 100vh;
+            color: #e2e8f0;
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .glass-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .status-idle {
+            background: linear-gradient(145deg, #1e293b 0%, #0f172a 50%, #334155 100%);
+            box-shadow: 
+                0 0 40px rgba(99, 102, 241, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        }
+
+        .status-starting {
+            background: linear-gradient(145deg, #f97316 0%, #ea580c 50%, #c2410c 100%);
+            box-shadow: 
+                0 0 50px rgba(249, 115, 22, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(249, 115, 22, 0.3);
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+
+        .status-active {
+            background: linear-gradient(145deg, #10b981 0%, #059669 50%, #047857 100%);
+            box-shadow: 
+                0 0 50px rgba(16, 185, 129, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .status-stopping {
+            background: linear-gradient(145deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
+            box-shadow: 
+                0 0 50px rgba(245, 158, 11, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            animation: pulse-glow 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { 
+                box-shadow: 
+                    0 0 50px currentColor,
+                    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+                opacity: 1;
+            }
+            50% { 
+                box-shadow: 
+                    0 0 70px currentColor,
+                    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+                opacity: 0.9;
+            }
+        }
+
+        .power-btn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%);
+            box-shadow: 
+                0 0 30px rgba(16, 185, 129, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .power-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 
+                0 10px 40px rgba(16, 185, 129, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        }
+
+        .power-btn.active {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
+            box-shadow: 
+                0 0 30px rgba(245, 158, 11, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .power-btn.active:hover {
+            box-shadow: 
+                0 10px 40px rgba(245, 158, 11, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        }
+
+        .progress-bar {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 9999px;
+            transition: width 0.5s ease;
+        }
+
+        .progress-cpu {
+            background: linear-gradient(90deg, #3b82f6, #60a5fa);
+        }
+
+        .progress-ram {
+            background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+        }
+
+        .player-card {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .player-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(59, 130, 246, 0.2);
+        }
+
+        .indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+
+        .indicator-online {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.6);
+        }
+
+        .indicator-offline {
+            background: linear-gradient(135deg, #475569 0%, #334155 100%);
+            box-shadow: 0 0 8px rgba(71, 85, 105, 0.3);
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .float-animation {
+            animation: float 6s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body class="p-6">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-8">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center">
+                    <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold text-white">MC-EcoHost</h1>
+                    <p class="text-sm text-slate-400">Minecraft Server Management</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-slate-400">API Status:</span>
+                <div id="api-status" class="flex items-center gap-2">
+                    <div class="indicator indicator-online"></div>
+                    <span class="text-sm text-green-400">Connected</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Status Card -->
+            <div class="glass-card rounded-2xl p-8 col-span-1 lg:col-span-2">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-lg font-semibold text-slate-300">Server Status</h2>
+                    <span id="uptime" class="text-sm text-slate-500">--:--:--</span>
+                </div>
+
+                <!-- Large Status Indicator -->
+                <div class="flex items-center justify-center mb-8">
+                    <div id="status-indicator" class="status-idle rounded-full w-40 h-40 flex items-center justify-center float-animation">
+                        <div id="status-text" class="text-2xl font-bold text-white tracking-wider">IDLE</div>
+                    </div>
+                </div>
+
+                <!-- Power Button -->
+                <div class="flex justify-center">
+                    <button id="power-btn" class="power-btn rounded-2xl px-12 py-4 text-white font-semibold text-lg flex items-center gap-3">
+                        <svg id="power-icon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+                        </svg>
+                        <span id="power-text">START SERVER</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Resource Monitoring -->
+            <div class="glass-card rounded-2xl p-6">
+                <h2 class="text-lg font-semibold text-slate-300 mb-6">System Resources</h2>
+
+                <!-- CPU -->
+                <div class="mb-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm text-slate-400">CPU Usage</span>
+                        <span id="cpu-value" class="text-sm font-semibold text-blue-400">0%</span>
+                    </div>
+                    <div class="progress-bar h-3">
+                        <div id="cpu-bar" class="progress-fill progress-cpu" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- RAM -->
+                <div class="mb-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm text-slate-400">Memory Usage</span>
+                        <span id="ram-value" class="text-sm font-semibold text-purple-400">0%</span>
+                    </div>
+                    <div class="progress-bar h-3">
+                        <div id="ram-bar" class="progress-fill progress-ram" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- Smart Energy Countdown -->
+                <div id="energy-countdown" class="hidden mb-6 border-t border-slate-700 pt-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm text-orange-400 font-medium">Auto-Shutdown</span>
+                        <span id="countdown-value" class="text-sm font-bold text-orange-400">0s</span>
+                    </div>
+                    <div class="progress-bar h-3 bg-slate-700 rounded-full overflow-hidden">
+                        <div id="countdown-bar" class="h-full bg-gradient-to-r from-orange-500 to-red-500 transition-all duration-1000" style="width: 100%"></div>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1">Server will stop if no players join</p>
+                </div>
+
+                <!-- Console Link Status -->
+                <div class="border-t border-slate-700 pt-4 mt-4">
+                    <h3 class="text-sm font-semibold text-slate-400 mb-4">Console Control</h3>
+                    
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <div id="console-indicator" class="indicator indicator-offline"></div>
+                                <span class="text-sm text-slate-400">Console Link</span>
+                            </div>
+                            <span id="console-status" class="text-xs text-slate-500">Disconnected</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Network Status -->
+                <div class="border-t border-slate-700 pt-4 mt-4">
+                    <h3 class="text-sm font-semibold text-slate-400 mb-4">Network Status</h3>
+                    
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <div id="radmin-indicator" class="indicator indicator-offline"></div>
+                                <span class="text-sm text-slate-400">Radmin VPN</span>
+                            </div>
+                            <span id="radmin-status" class="text-xs text-slate-500">Disconnected</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <div id="zerotier-indicator" class="indicator indicator-offline"></div>
+                                <span class="text-sm text-slate-400">ZeroTier</span>
+                            </div>
+                            <span id="zerotier-status" class="text-xs text-slate-500">Disconnected</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player Grid -->
+        <div class="mt-6">
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold text-slate-300">Online Players</h2>
+                    <span id="player-count" class="text-sm text-slate-400">0 / --</span>
+                </div>
+                
+                <div id="player-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    <div class="col-span-full text-center py-8">
+                        <p class="text-slate-500">No players online</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hung Server Alert -->
+        <div id="hung-alert" class="mt-6 hidden">
+            <div class="glass-card rounded-2xl p-6 border-red-500 border-2">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-red-400">Server Hung</h3>
+                        <p class="text-sm text-slate-400">The server did not respond to the stop command within 60 seconds. It may require manual intervention.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Section -->
+        <div class="mt-6">
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold text-slate-300">Server Logs</h2>
+                    <button id="refresh-logs" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                        Refresh
+                    </button>
+                </div>
+                
+                <div id="log-container" class="bg-slate-900 rounded-xl p-4 h-48 overflow-y-auto font-mono text-xs">
+                    <div class="text-slate-500">Waiting for logs...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- EcoHost Logs Section -->
+        <div class="mt-6">
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold text-slate-300">EcoHost Logs</h2>
+                    <button id="refresh-ecohost-logs" class="text-sm text-orange-400 hover:text-orange-300 transition-colors">
+                        Refresh
+                    </button>
+                </div>
+                
+                <div id="ecohost-log-container" class="bg-slate-900 rounded-xl p-4 h-48 overflow-y-auto font-mono text-xs">
+                    <div class="text-slate-500">Waiting for logs...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Section -->
+        <div class="mt-6">
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-lg font-semibold text-slate-300">Settings</h2>
+                    <span id="settings-status" class="text-sm text-green-400 hidden">Saved!</span>
+                </div>
+
+                <div class="space-y-6">
+                    <!-- Auto-Shutdown -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">Auto-Shutdown</h3>
+                            <p class="text-xs text-slate-400 mt-1">Automatically stop server when empty</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="auto-shutdown-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- Auto-Shutdown Duration -->
+                    <div class="p-4 bg-slate-800/50 rounded-xl">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-medium text-white">Shutdown Duration</h3>
+                            <span id="duration-value" class="text-sm text-blue-400">300s</span>
+                        </div>
+                        <input type="range" id="shutdown-duration" min="10" max="3600" value="300" class="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                        <div class="flex justify-between text-xs text-slate-500 mt-2">
+                            <span>10s</span>
+                            <span>3600s (1h)</span>
+                        </div>
+                    </div>
+
+                    <!-- Auto-Start on Ping -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">Auto-Start on Ping</h3>
+                            <p class="text-xs text-slate-400 mt-1">Start server when player tries to join</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="auto-start-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- Power Mode Scheduling -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">Power Mode Scheduling</h3>
+                            <p class="text-xs text-slate-400 mt-1">Auto-switch between High Performance and Power Saver</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="power-schedule-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- EcoHost Precision (BETA) -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl border border-orange-500/30">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">EcoHost Precision <span class="text-xs text-orange-400 font-semibold">(BETA)</span></h3>
+                            <p class="text-xs text-slate-400 mt-1">Smart power mode based on player count</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="ecohost-precision-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-orange-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- Power Mode Time Settings -->
+                    <div class="p-4 bg-slate-800/50 rounded-xl">
+                        <h3 class="text-sm font-medium text-white mb-4">Work Schedule</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-xs text-slate-400 block mb-2">Work Start</label>
+                                <input type="time" id="high-perf-start" value="09:00" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs text-slate-400 block mb-2">Work End</label>
+                                <input type="time" id="high-perf-end" value="22:00" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+                        <div class="mt-4">
+                            <label class="text-xs text-slate-400 block mb-2">Manual Power Mode</label>
+                            <select id="manual-power-mode" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="balanced">Balanced</option>
+                                <option value="power_saver">Power Saver</option>
+                                <option value="high_performance">High Performance</option>
+                                <option value="ultimate_performance">Ultimate Performance</option>
+                            </select>
+                            <p class="text-xs text-slate-500 mt-1">Disables EcoHost Precision and Power Mode Scheduling</p>
+                        </div>
+                        <div class="mt-3 flex items-center justify-between">
+                            <span class="text-xs text-slate-400">Current Power Mode:</span>
+                            <span id="current-power-mode" class="text-sm font-medium text-green-400">Balanced</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            let currentState = 'IDLE';
+            let ws = null;
+            let reconnectAttempts = 0;
+            const maxReconnectAttempts = 5;
+
+            // DOM Elements
+            const statusIndicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            const powerBtn = document.getElementById('power-btn');
+            const powerText = document.getElementById('power-text');
+            const powerIcon = document.getElementById('power-icon');
+            const cpuValue = document.getElementById('cpu-value');
+            const cpuBar = document.getElementById('cpu-bar');
+            const ramValue = document.getElementById('ram-value');
+            const ramBar = document.getElementById('ram-bar');
+            const playerGrid = document.getElementById('player-grid');
+            const playerCount = document.getElementById('player-count');
+            const uptime = document.getElementById('uptime');
+            const logContainer = document.getElementById('log-container');
+            const ecohostLogContainer = document.getElementById('ecohost-log-container');
+            const apiStatus = document.getElementById('api-status');
+            const consoleIndicator = document.getElementById('console-indicator');
+            const consoleStatus = document.getElementById('console-status');
+            const currentPowerMode = document.getElementById('current-power-mode');
+            const manualPowerMode = document.getElementById('manual-power-mode');
+            const ecohostPrecisionToggle = document.getElementById('ecohost-precision-toggle');
+            const powerScheduleToggle = document.getElementById('power-schedule-toggle');
+
+            // Console link indicator
+            function updateConsoleLink(consoleLink, pywinautoAvailable) {
+                const consoleIndicator = document.getElementById('console-indicator');
+                const consoleStatus = document.getElementById('console-status');
+                
+                if (!pywinautoAvailable) {
+                    consoleIndicator.className = 'indicator indicator-offline';
+                    consoleStatus.textContent = 'Not Available';
+                    consoleStatus.className = 'text-xs text-slate-500';
+                } else if (consoleLink) {
+                    consoleIndicator.className = 'indicator indicator-online';
+                    consoleStatus.textContent = 'Connected';
+                    consoleStatus.className = 'text-xs text-green-400';
+                } else {
+                    consoleIndicator.className = 'indicator indicator-offline';
+                    consoleStatus.textContent = 'Disconnected';
+                    consoleStatus.className = 'text-xs text-slate-500';
+                }
+            }
+
+            // Hung server alert
+            function updateHungAlert(serverHung) {
+                const hungAlert = document.getElementById('hung-alert');
+                if (serverHung) {
+                    hungAlert.classList.remove('hidden');
+                } else {
+                    hungAlert.classList.add('hidden');
+                }
+            }
+
+            // Update countdown display
+            function updateCountdown(data) {
+                const countdownDiv = document.getElementById('energy-countdown');
+                const countdownValue = document.getElementById('countdown-value');
+                const countdownBar = document.getElementById('countdown-bar');
+                
+                if (data.countdown_active && data.state === 'ACTIVE' && data.player_count === 0) {
+                    countdownDiv.classList.remove('hidden');
+                    countdownValue.textContent = `${data.countdown_remaining}s`;
+                    const percentage = (data.countdown_remaining / data.countdown_total) * 100;
+                    countdownBar.style.width = `${percentage}%`;
+                } else {
+                    countdownDiv.classList.add('hidden');
+                }
+            }
+
+        // Update UI based on state
+        function updateUI(data) {
+            const state = data.state;
+            currentState = state;
+
+            // Update status indicator
+            statusIndicator.className = `status-${state.toLowerCase()} rounded-full w-40 h-40 flex items-center justify-center float-animation`;
+            statusText.textContent = state;
+
+            // Update power button (Professional three-state system)
+            if (state === 'IDLE') {
+                // OFFLINE: Show START SERVER button
+                powerBtn.classList.remove('active');
+                powerText.textContent = 'START SERVER';
+                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+            } else if (state === 'ACTIVE') {
+                // ONLINE: Show STOP SERVER button
+                powerBtn.classList.add('active');
+                powerText.textContent = 'STOP SERVER';
+                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>';
+            } else if (state === 'STARTING') {
+                // STARTING: Show STARTING... button (disabled)
+                powerBtn.classList.remove('active');
+                powerText.textContent = 'STARTING...';
+                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+            } else {
+                // STOPPING
+                powerBtn.classList.remove('active');
+                powerText.textContent = 'STOPPING...';
+                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+            }
+
+            // Disable button during transitions
+            powerBtn.disabled = state === 'STARTING' || state === 'STOPPING';
+            powerBtn.style.opacity = powerBtn.disabled ? '0.6' : '1';
+
+            // Update countdown display
+            updateCountdown(data);
+
+            // Update resources
+            cpuValue.textContent = `${Math.round(data.cpu_usage)}%`;
+            cpuBar.style.width = `${data.cpu_usage}%`;
+            ramValue.textContent = `${Math.round(data.ram_usage)}%`;
+            ramBar.style.width = `${data.ram_usage}%`;
+
+            // Update players
+            const players = data.players || [];
+            const maxPlayers = data.max_players || 20;
+            playerCount.textContent = `${players.length} / ${maxPlayers}`;
+
+            if (players.length > 0) {
+                playerGrid.innerHTML = players.map(player => `
+                    <div class="player-card rounded-xl p-4">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
+                                <span class="text-sm">🎮</span>
+                            </div>
+                            <span class="text-sm font-medium text-white">${player}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                playerGrid.innerHTML = `
+                    <div class="col-span-full text-center py-8">
+                        <p class="text-slate-500">No players online</p>
+                    </div>
+                `;
+            }
+
+            // Update uptime
+            if (data.uptime > 0) {
+                const hours = Math.floor(data.uptime / 3600);
+                const minutes = Math.floor((data.uptime % 3600) / 60);
+                const seconds = Math.floor(data.uptime % 60);
+                uptime.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            } else {
+                uptime.textContent = '--:--:--';
+            }
+
+            // Update network status
+            const network = data.network || { zerotier: false, radmin: false };
+            
+            const radminIndicator = document.getElementById('radmin-indicator');
+            const radminStatus = document.getElementById('radmin-status');
+            if (network.radmin) {
+                radminIndicator.className = 'indicator indicator-online';
+                radminStatus.textContent = 'Connected';
+                radminStatus.className = 'text-xs text-green-400';
+            } else {
+                radminIndicator.className = 'indicator indicator-offline';
+                radminStatus.textContent = 'Disconnected';
+                radminStatus.className = 'text-xs text-slate-500';
+            }
+
+            const zerotierIndicator = document.getElementById('zerotier-indicator');
+            const zerotierStatus = document.getElementById('zerotier-status');
+            if (network.zerotier) {
+                zerotierIndicator.className = 'indicator indicator-online';
+                zerotierStatus.textContent = 'Connected';
+                zerotierStatus.className = 'text-xs text-green-400';
+            } else {
+                zerotierIndicator.className = 'indicator indicator-offline';
+                zerotierStatus.textContent = 'Disconnected';
+                zerotierStatus.className = 'text-xs text-slate-500';
+            }
+
+            // Update current power mode
+            if (data.current_power_mode) {
+                const modeDisplay = data.current_power_mode.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                currentPowerMode.textContent = modeDisplay;
+                currentPowerMode.className = 'text-sm font-medium ' + 
+                    (data.current_power_mode === 'ultimate_performance' ? 'text-purple-400' : 
+                     data.current_power_mode === 'high_performance' ? 'text-green-400' : 
+                     data.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
+            }
+        }
+
+        // Manual power mode handler
+        manualPowerMode.addEventListener('change', async () => {
+            const mode = manualPowerMode.value;
+            try {
+                const response = await fetch('/power/mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    console.log(`Power mode set to ${mode}`);
+                    // Fetch updated settings to reflect disabled auto modes
+                    const settingsResponse = await fetch('/settings');
+                    const settingsData = await settingsResponse.json();
+                    // Update UI toggles to show auto modes are disabled
+                    ecohostPrecisionToggle.checked = settingsData.ecohost_precision_enabled;
+                    powerScheduleToggle.checked = settingsData.power_mode_scheduling_enabled;
+                    // Update current power mode text and color
+                    const modeMap = {
+                        'ultimate_performance': 'Ultimate Performance',
+                        'high_performance': 'High Performance',
+                        'power_saver': 'Power Saver',
+                        'balanced': 'Balanced'
+                    };
+                    currentPowerMode.textContent = modeMap[settingsData.current_power_mode] || 'Balanced';
+                    currentPowerMode.className = 'text-sm font-medium ' + 
+                        (settingsData.current_power_mode === 'ultimate_performance' ? 'text-purple-400' : 
+                         settingsData.current_power_mode === 'high_performance' ? 'text-green-400' : 
+                         settingsData.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
+                } else {
+                    alert(data.message);
+                }
+            } catch (e) {
+                console.error('Failed to set power mode:', e);
+                alert('Failed to set power mode');
+            }
+        });
+
+        // Power button handler
+        powerBtn.addEventListener('click', async () => {
+            if (currentState === 'IDLE') {
+                // Start server
+                try {
+                    const response = await fetch('/power/start', { method: 'POST' });
+                    const data = await response.json();
+                    if (!data.success) {
+                        alert(data.message);
+                    }
+                } catch (e) {
+                    console.error('Failed to start:', e);
+                    alert('Failed to connect to API');
+                }
+            } else if (currentState === 'ACTIVE') {
+                // Stop server
+                try {
+                    const response = await fetch('/power/stop', { method: 'POST' });
+                    const data = await response.json();
+                    if (!data.success) {
+                        alert(data.message);
+                    }
+                } catch (e) {
+                    console.error('Failed to stop:', e);
+                    alert('Failed to connect to API');
+                }
+            }
+        });
+
+        // Fetch logs
+        async function fetchLogs() {
+            try {
+                const response = await fetch('/logs');
+                const data = await response.json();
+                
+                if (data.logs && data.logs.length > 0) {
+                    logContainer.innerHTML = data.logs.slice(-20).map(line => 
+                        `<div class="text-slate-400 hover:text-slate-300 py-0.5">${escapeHtml(line)}</div>`
+                    ).join('');
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                }
+            } catch (e) {
+                console.error('Failed to fetch logs:', e);
+            }
+        }
+
+        // Fetch EcoHost logs
+        async function fetchEcoHostLogs() {
+            try {
+                const response = await fetch('/ecohost-logs');
+                const data = await response.json();
+                
+                if (data.logs && data.logs.length > 0) {
+                    ecohostLogContainer.innerHTML = data.logs.slice(-20).map(line => 
+                        `<div class="text-slate-400 hover:text-slate-300 py-0.5">${escapeHtml(line)}</div>`
+                    ).join('');
+                    ecohostLogContainer.scrollTop = ecohostLogContainer.scrollHeight;
+                }
+            } catch (e) {
+                console.error('Failed to fetch EcoHost logs:', e);
+            }
+        }
+
+        // Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Refresh logs buttons
+        document.getElementById('refresh-logs').addEventListener('click', fetchLogs);
+        document.getElementById('refresh-ecohost-logs').addEventListener('click', fetchEcoHostLogs);
+
+        // WebSocket connection
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            try {
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    reconnectAttempts = 0;
+                    apiStatus.innerHTML = `
+                        <div class="indicator indicator-online"></div>
+                        <span class="text-sm text-green-400">Connected</span>
+                    `;
+                };
+
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    updateUI(data);
+                    updateConsoleLink(data.console_link, data.pywinauto_available);
+                    updateHungAlert(data.server_hung);
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    apiStatus.innerHTML = `
+                        <div class="indicator indicator-offline"></div>
+                        <span class="text-sm text-red-400">Disconnected</span>
+                    `;
+                    
+                    // Reconnect
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        setTimeout(connectWebSocket, 2000 * reconnectAttempts);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                };
+            } catch (e) {
+                console.error('WebSocket connection failed:', e);
+            }
+        }
+
+        // Initial fetch
+        async function fetchInitialStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                updateUI(data);
+            } catch (e) {
+                console.error('Failed to fetch status:', e);
+                apiStatus.innerHTML = `
+                    <div class="indicator indicator-offline"></div>
+                    <span class="text-sm text-red-400">API Unavailable</span>
+                `;
+            }
+        }
+
+        // Initialize
+        fetchInitialStatus();
+        fetchLogs();
+        fetchEcoHostLogs();
+        connectWebSocket();
+
+        // Periodic log refresh
+        setInterval(fetchLogs, 5000);
+        setInterval(fetchEcoHostLogs, 5000);
+
+        // Settings functionality
+        const autoShutdownToggle = document.getElementById('auto-shutdown-toggle');
+        const shutdownDuration = document.getElementById('shutdown-duration');
+        const durationValue = document.getElementById('duration-value');
+        const autoStartToggle = document.getElementById('auto-start-toggle');
+        const highPerfStart = document.getElementById('high-perf-start');
+        const highPerfEnd = document.getElementById('high-perf-end');
+        const settingsStatus = document.getElementById('settings-status');
+
+        // Load settings on page load
+        async function loadSettings() {
+            try {
+                const response = await fetch('/settings');
+                const data = await response.json();
+                
+                autoShutdownToggle.checked = data.auto_shutdown_enabled;
+                shutdownDuration.value = data.auto_shutdown_duration;
+                durationValue.textContent = `${data.auto_shutdown_duration}s`;
+                autoStartToggle.checked = data.auto_start_on_ping;
+                powerScheduleToggle.checked = data.power_mode_scheduling_enabled;
+                ecohostPrecisionToggle.checked = data.ecohost_precision_enabled;
+                highPerfStart.value = data.high_performance_start;
+                highPerfEnd.value = data.high_performance_end;
+                
+                // Update power mode display
+                const modeMap = {
+                    'ultimate_performance': 'Ultimate Performance',
+                    'high_performance': 'High Performance',
+                    'power_saver': 'Power Saver',
+                    'balanced': 'Balanced'
+                };
+                currentPowerMode.textContent = modeMap[data.current_power_mode] || 'Balanced';
+                currentPowerMode.className = 'text-sm font-medium ' + 
+                    (data.current_power_mode === 'ultimate_performance' ? 'text-purple-400' : 
+                     data.current_power_mode === 'high_performance' ? 'text-green-400' : 
+                     data.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
+                
+                // Update manual power mode dropdown to match current power mode
+                manualPowerMode.value = data.current_power_mode || 'balanced';
+            } catch (e) {
+                console.error('Failed to load settings:', e);
+            }
+        }
+
+        // Save settings
+        async function saveSettings() {
+            try {
+                const response = await fetch('/settings', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        auto_shutdown_enabled: autoShutdownToggle.checked,
+                        auto_shutdown_duration: parseInt(shutdownDuration.value),
+                        auto_start_on_ping: autoStartToggle.checked,
+                        power_mode_scheduling_enabled: powerScheduleToggle.checked,
+                        ecohost_precision_enabled: ecohostPrecisionToggle.checked,
+                        high_performance_start: highPerfStart.value,
+                        high_performance_end: highPerfEnd.value
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    settingsStatus.classList.remove('hidden');
+                    setTimeout(() => settingsStatus.classList.add('hidden'), 2000);
+                } else {
+                    alert(data.message);
+                }
+            } catch (e) {
+                console.error('Failed to save settings:', e);
+                alert('Failed to save settings');
+            }
+        }
+
+        // Event listeners for settings
+        autoShutdownToggle.addEventListener('change', saveSettings);
+        autoStartToggle.addEventListener('change', saveSettings);
+        powerScheduleToggle.addEventListener('change', saveSettings);
+        ecohostPrecisionToggle.addEventListener('change', saveSettings);
+        highPerfStart.addEventListener('change', saveSettings);
+        highPerfEnd.addEventListener('change', saveSettings);
+        
+        shutdownDuration.addEventListener('input', () => {
+            durationValue.textContent = `${shutdownDuration.value}s`;
+        });
+        
+        shutdownDuration.addEventListener('change', saveSettings);
+
+        // Load settings on initialization
+        loadSettings();
+    </script>
+</body>
+</html>

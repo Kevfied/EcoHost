@@ -1,0 +1,11 @@
+{
+    "auto_shutdown_enabled": true,
+    "auto_shutdown_duration": 178,
+    "auto_start_on_ping": true,
+    "power_mode_scheduling_enabled": true,
+    "high_performance_start": "09:00",
+    "high_performance_end": "21:00",
+    "current_power_mode": "balanced",
+    "ecohost_precision_enabled": true,
+    "jwt_secret": "680f564c2b8b0f167d4273e8c1c0d699f87c372d2b88943eefcadd6b876d9795"
+}
