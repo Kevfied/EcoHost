@@ -52,7 +52,7 @@ from Modules.models import (
     PlayerDataResponse
 )
 from Modules.server_control import console_controller, is_minecraft_process_running
-from Modules.log_watcher import start_log_watcher, record_player_join, record_player_leave, update_ecohost_precision_mode
+from Modules.log_watcher import start_log_watcher, start_ping_listener, record_player_join, record_player_leave, update_ecohost_precision_mode
 from Modules.resource_monitor import get_system_resources
 from Modules.player_sessions import (
     player_sessions, server_uptime_stats, PlayerSession,
@@ -242,6 +242,7 @@ async def lifespan(app: FastAPI):
     attach_to_existing_server()
     
     start_log_watcher()
+    start_ping_listener()
     logger.info("MC-EcoHost ready")
     yield
     logger.info("MC-EcoHost shutting down...")

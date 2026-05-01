@@ -219,14 +219,14 @@ def ban_player(username: str, reason: str = "") -> bool:
     return execute_command(command)
 
 
-def stop_server() -> bool:
+async def stop_server() -> bool:
     """
     Stop the server using the best available method.
     
     Returns:
         True if command was sent, False otherwise
     """
-    return execute_command("stop")
+    return await execute_command("stop")
 
 
 # Common command aliases for convenience

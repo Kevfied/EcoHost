@@ -30,6 +30,85 @@ def is_port_open(host: str, port: int) -> bool:
         return False
 
 
+def ping_listener():
+    """Background thread that listens for port 25565 connection attempts to auto-start server."""
+    global ping_listener_running, server_status
+    
+    import socket
+    import threading
+    
+    ping_listener_running = True
+    logger.info("[PingListener] Starting ping listener on port 25565")
+    
+    while ping_listener_running:
+        try:
+            if app_settings.auto_start_on_ping and server_status.state == ServerState.IDLE:
+                # Try to accept a connection on port 25565
+                # If someone tries to connect, the server is not running
+                # We need to detect the connection attempt and start the server
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(1)
+                        s.bind(("0.0.0.0", MINECRAFT_PORT))
+                        s.listen(1)
+                        logger.info("[PingListener] Waiting for connection on port 25565...")
+                        
+                        # Wait for a connection attempt
+                        conn, addr = s.accept()
+                        logger.info(f"[PingListener] Connection attempt detected from {addr[0]}")
+                        conn.close()
+                        
+                        # Start the server
+                        logger.info("[PingListener] Auto-starting server due to connection attempt")
+                        from .server_control import console_controller
+                        import asyncio
+                        
+                        # Start the server in a new thread to avoid blocking
+                        def start_server_thread():
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            loop.run_until_complete(console_controller.start())
+                            loop.close()
+                        
+                        start_thread = threading.Thread(target=start_server_thread, daemon=True)
+                        start_thread.start()
+                        
+                        # Wait a bit before listening again
+                        time.sleep(5)
+                        
+                except socket.timeout:
+                    # No connection, continue listening
+                    continue
+                except OSError as e:
+                    if e.errno == 10048:  # Address already in use
+                        # Port is already in use, server might be running
+                        time.sleep(1)
+                    else:
+                        logger.error(f"[PingListener] Socket error: {e}")
+                        time.sleep(1)
+                except Exception as e:
+                    logger.error(f"[PingListener] Error: {e}")
+                    time.sleep(1)
+            else:
+                # Auto-start disabled or server not idle, just wait
+                time.sleep(1)
+                
+        except Exception as e:
+            logger.error(f"[PingListener] Listener error: {e}")
+            time.sleep(1)
+    
+    logger.info("[PingListener] Ping listener stopped")
+
+
+def start_ping_listener():
+    """Start the ping listener in a background thread."""
+    global ping_listener_running
+    ping_listener_running = True
+    listener_thread = threading.Thread(target=ping_listener, daemon=True)
+    listener_thread.start()
+    logger.info("Ping listener thread started")
+
+
 def parse_player_joined(line: str) -> Optional[str]:
     """Parse player join from log line."""
     patterns = [
@@ -37,6 +116,10 @@ def parse_player_joined(line: str) -> Optional[str]:
         r"(\S+) joined the game",
         r"joined the game.*?: (\S+)",
         r"(\S+) has joined",
+        r"UUID of player (\S+) is",
+        r"(\S+)\[.*?\] logged in",
+        r"(\S+) made the connection",
+        r"(\S+) joined",
     ]
     for pattern in patterns:
         match = re.search(pattern, line, re.IGNORECASE)
@@ -410,7 +493,8 @@ def log_watcher():
                             server_status.state = ServerState.STOPPING
                             try:
                                 from .commands import stop_server
-                                stop_server()
+                                import asyncio
+                                asyncio.create_task(stop_server())
                             except Exception as e:
                                 logger.error(f"[SmartEnergy] Auto-shutdown failed: {e}")
                 else:

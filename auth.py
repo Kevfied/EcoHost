@@ -132,6 +132,7 @@ PERMISSIONS = {
         "view_server_logs",
     },
     UserRole.VIEWER: {
+        "server_start",
         "view_dashboard",
         "view_players",
         "view_server_logs",
