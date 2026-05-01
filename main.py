@@ -766,7 +766,7 @@ async def update_user_status(
 @app.get("/status", response_model=StatusResponse)
 async def get_status(current_user: User = require_auth()):
     """Get current server status including console link state."""
-    global server_status, server_hung
+    global server_status, server_hung, empty_server_countdown, countdown_active
 
     cpu, ram = get_system_resources()
     server_status.cpu_usage = cpu
@@ -783,6 +783,12 @@ async def get_status(current_user: User = require_auth()):
     # Get network status
     network = get_network_status()
 
+    # Calculate countdown status
+    countdown_remaining = 0
+    if countdown_active and empty_server_countdown:
+        elapsed = time.time() - empty_server_countdown
+        countdown_remaining = max(0, app_settings.auto_shutdown_duration - int(elapsed))
+
     return StatusResponse(
         state=server_status.state,
         players=[p.username for p in server_status.players],
@@ -794,6 +800,9 @@ async def get_status(current_user: User = require_auth()):
         network=network,
         console_link=console_link,
         server_hung=server_hung,
+        countdown_active=countdown_active,
+        countdown_remaining=countdown_remaining,
+        countdown_total=app_settings.auto_shutdown_duration,
     )
 
 

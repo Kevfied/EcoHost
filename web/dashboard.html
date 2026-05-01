@@ -404,6 +404,18 @@
                             <span id="player-count" class="text-sm text-white font-medium">0 / 20</span>
                         </div>
                     </div>
+
+                    <!-- Auto-Shutdown Countdown -->
+                    <div id="countdown-container" class="mt-4 pt-4 border-t border-slate-700 hidden">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-medium text-orange-400">Auto-Shutdown Countdown</span>
+                            <span id="countdown-text" class="text-sm text-orange-300 font-mono">0s</span>
+                        </div>
+                        <div class="relative h-2 bg-slate-700 rounded-full overflow-hidden">
+                            <div id="countdown-bar" class="absolute top-0 left-0 h-full bg-gradient-to-r from-orange-500 to-red-500 transition-all duration-1000" style="width: 100%"></div>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-2">Server will shut down when empty</p>
+                    </div>
                 </div>
             </div>
 
@@ -1040,10 +1052,10 @@
 
         // Role-based permissions
         const rolePermissions = {
-            [userRoles.ADMIN]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'change_settings', 'user_management', 'power_mode_control', 'player_management'],
-            [userRoles.MODERATOR]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'player_management'],
-            [userRoles.VIEWER_PLUS]: ['server_start', 'view_dashboard', 'view_players', 'view_server_logs'],
-            [userRoles.VIEWER]: ['view_dashboard', 'view_players', 'view_server_logs']
+            [userRoles.ADMIN]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'view_resources', 'change_settings', 'user_management', 'power_mode_control', 'player_management'],
+            [userRoles.MODERATOR]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'player_management'],
+            [userRoles.VIEWER_PLUS]: ['server_start', 'view_dashboard', 'view_players', 'view_server_logs', 'view_resources'],
+            [userRoles.VIEWER]: ['server_start', 'view_dashboard']
         };
 
         function hasPermission(permission) {
@@ -1118,6 +1130,24 @@
                 if (settingsNav) settingsNav.style.display = 'none';
             }
 
+            // Hide Players tab for users without view_players permission
+            if (!hasPermission('view_players')) {
+                const playersNav = document.querySelector('[data-page="players"]');
+                if (playersNav) playersNav.style.display = 'none';
+            }
+
+            // Hide Resources tab for users without view_resources permission
+            if (!hasPermission('view_resources')) {
+                const resourcesNav = document.querySelector('[data-page="resources"]');
+                if (resourcesNav) resourcesNav.style.display = 'none';
+            }
+
+            // Hide Console tab for users without view_server_logs permission
+            if (!hasPermission('view_server_logs')) {
+                const consoleNav = document.querySelector('[data-page="console"]');
+                if (consoleNav) consoleNav.style.display = 'none';
+            }
+
             // Hide server logs section on dashboard for users without view_server_logs permission
             if (!hasPermission('view_server_logs')) {
                 // Find the Server Logs card on dashboard (it's a glass-card containing "Server Logs" h3)
@@ -1138,7 +1168,7 @@
                 const playersNav = document.querySelector('[data-page="players"]');
                 if (playersNav) playersNav.style.display = 'none';
             }
-            if (!hasPermission('view_server_logs')) {  // Using view_server_logs for Resources page too
+            if (!hasPermission('view_resources')) {
                 const resourcesNav = document.querySelector('[data-page="resources"]');
                 if (resourcesNav) resourcesNav.style.display = 'none';
             }
@@ -1152,6 +1182,24 @@
                         const heading = card.querySelector('h3');
                         if (heading && heading.textContent === 'EcoHost Logs') {
                             card.style.display = 'none';
+                        }
+                    });
+                }
+            }
+
+            // Hide command input for users without console_command permission
+            if (!hasPermission('console_command')) {
+                const commandSection = document.getElementById('console-input');
+                if (commandSection) commandSection.style.display = 'none';
+                const sendButton = document.getElementById('console-send');
+                if (sendButton) sendButton.style.display = 'none';
+                // Also hide the parent container label
+                const consolePage = document.getElementById('page-console');
+                if (consolePage) {
+                    const labels = consolePage.querySelectorAll('label');
+                    labels.forEach(label => {
+                        if (label.textContent.includes('Command')) {
+                            label.style.display = 'none';
                         }
                     });
                 }
@@ -1291,15 +1339,29 @@
             const canStop = hasPermission('server_stop');
             const needsStart = state === 'IDLE';
             const needsStop = state === 'ACTIVE' || state === 'STARTING';
-            
+
             const noPermission = (needsStart && !canStart) || (needsStop && !canStop);
             powerBtn.disabled = state === 'STARTING' || state === 'STOPPING' || noPermission;
             powerBtn.style.opacity = powerBtn.disabled ? '0.6' : '1';
-            
+
             if (noPermission) {
                 powerBtn.title = needsStop ? 'Moderator access required to stop' : 'Access denied';
             } else {
                 powerBtn.title = '';
+            }
+
+            // Update countdown UI
+            const countdownContainer = document.getElementById('countdown-container');
+            const countdownText = document.getElementById('countdown-text');
+            const countdownBar = document.getElementById('countdown-bar');
+
+            if (data.countdown_active && data.countdown_remaining > 0) {
+                countdownContainer.classList.remove('hidden');
+                countdownText.textContent = `${data.countdown_remaining}s`;
+                const percentage = (data.countdown_remaining / data.countdown_total) * 100;
+                countdownBar.style.width = `${percentage}%`;
+            } else {
+                countdownContainer.classList.add('hidden');
             }
 
             // Update resources
@@ -1414,9 +1476,10 @@
         // Fetch logs
         async function fetchLogs() {
             try {
-                const response = await fetch('/logs');
-                const data = await response.json();
+                const response = await fetch('/logs', { credentials: 'same-origin' });
+                if (!response.ok) return;
                 
+                const data = await response.json();
                 if (data.logs && data.logs.length > 0) {
                     logContainer.innerHTML = data.logs.slice(-20).map(line => 
                         `<div class="text-slate-400 hover:text-slate-300 py-0.5">${escapeHtml(line)}</div>`
@@ -1478,7 +1541,7 @@
         // Fetch server logs for Console page
         async function fetchConsoleLogs() {
             try {
-                const response = await fetch('/logs');
+                const response = await fetch('/logs', { credentials: 'same-origin' });
                 const data = await response.json();
                 
                 if (data.logs && data.logs.length > 0) {
@@ -1495,7 +1558,7 @@
         // Fetch EcoHost logs for Console page
         async function fetchConsoleEcoHostLogs() {
             try {
-                const response = await fetch('/ecohost-logs');
+                const response = await fetch('/ecohost-logs', { credentials: 'same-origin' });
                 const data = await response.json();
                 
                 if (data.logs && data.logs.length > 0) {

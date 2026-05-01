@@ -110,6 +110,7 @@ PERMISSIONS = {
         "view_players",
         "view_server_logs",
         "view_ecohost_logs",
+        "view_resources",
         "change_settings",
         "user_management",
         "power_mode_control",
@@ -122,7 +123,6 @@ PERMISSIONS = {
         "view_dashboard",
         "view_players",
         "view_server_logs",
-        "view_ecohost_logs",
         "player_management",
     },
     UserRole.VIEWER_PLUS: {
@@ -130,12 +130,11 @@ PERMISSIONS = {
         "view_dashboard",
         "view_players",
         "view_server_logs",
+        "view_resources",
     },
     UserRole.VIEWER: {
         "server_start",
         "view_dashboard",
-        "view_players",
-        "view_server_logs",
     },
 }
 

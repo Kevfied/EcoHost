@@ -366,20 +366,21 @@ def update_ecohost_precision_mode():
 
 
 def log_watcher():
-    """Background thread that monitors server status and log file."""
-    global server_status, log_lines, log_watcher_running, stop_initiated_time, server_hung
-    global empty_server_countdown, countdown_active
-
+    """Background thread that monitors server logs and updates player list."""
+    global server_status, log_watcher_running, last_position, stop_initiated_time, server_hung
+    global empty_server_countdown, countdown_active, last_countdown_log, last_window_check, java_was_running, log_lines
+    
     log_watcher_running = True
+    logger.info("Log watcher started")
+    
+    # Reset position and clear log buffer when starting to ensure we get fresh logs
     last_position = 0
     last_window_check = 0
     java_was_running = False
     last_countdown_log = 0
-
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-    logger.info("[GhostConsole] Status monitor started")
-
+    with log_lock:
+        log_lines.clear()
+    
     while log_watcher_running:
         try:
             current_time = time.time()
@@ -435,6 +436,7 @@ def log_watcher():
                 current_size = LOG_FILE.stat().st_size
 
                 if current_size < last_position:
+                    logger.info(f"[GhostConsole] Log file rotated, resetting position (was {last_position}, now {current_size})")
                     last_position = 0
 
                 if current_size > last_position:
@@ -442,7 +444,7 @@ def log_watcher():
                         f.seek(last_position)
                         new_lines = f.readlines()
                         last_position = f.tell()
-
+                    
                     for line in new_lines:
                         line = line.strip()
                         if not line:
@@ -451,7 +453,8 @@ def log_watcher():
                         with log_lock:
                             log_lines.append(line)
                             if len(log_lines) > LOG_BUFFER_SIZE:
-                                log_lines = log_lines[-LOG_BUFFER_SIZE:]
+                                # Remove oldest lines from the beginning (in-place)
+                                del log_lines[:-LOG_BUFFER_SIZE]
                         
                         if player := parse_player_joined(line):
                             if not any(p.username == player for p in server_status.players):

@@ -150,6 +150,9 @@ class StatusResponse(BaseModel):
     network: dict
     console_link: str
     server_hung: bool  # True if stop sent but server still running after 60s
+    countdown_active: bool = False  # True if auto-shutdown countdown is running
+    countdown_remaining: int = 0  # Seconds remaining until shutdown
+    countdown_total: int = 0  # Total countdown duration in seconds
 
 
 class LogsResponse(BaseModel):
