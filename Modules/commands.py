@@ -226,7 +226,14 @@ async def stop_server() -> bool:
     Returns:
         True if command was sent, False otherwise
     """
-    return await execute_command("stop")
+    # Use console_controller directly for proper graceful shutdown
+    try:
+        from .server_control import console_controller
+        logger.info("[Commands] Initiating server stop via console controller")
+        return await console_controller.stop()
+    except Exception as e:
+        logger.error(f"[Commands] Server stop failed: {e}")
+        return False
 
 
 # Common command aliases for convenience

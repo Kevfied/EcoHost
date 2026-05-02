@@ -55,11 +55,21 @@
         "joined_at": 1777474016.0863523,
         "left_at": null,
         "duration_seconds": 0
+      },
+      {
+        "joined_at": 1777691332.988239,
+        "left_at": null,
+        "duration_seconds": 0
+      },
+      {
+        "joined_at": 1777691788.9995213,
+        "left_at": null,
+        "duration_seconds": 0
       }
     ],
     "total_playtime_seconds": 1681.880835056305,
-    "last_seen": 1777474016.0863523,
-    "join_count": 11,
+    "last_seen": 1777691788.9995213,
+    "join_count": 13,
     "first_join": 1777470474.5831065
   },
   "KimJongUn2.0": {
@@ -133,11 +143,41 @@
         "joined_at": 1777473914.1472902,
         "left_at": 1777474113.5469177,
         "duration_seconds": 199.3996274471283
+      },
+      {
+        "joined_at": 1777691332.6810708,
+        "left_at": 1777691332.7411482,
+        "duration_seconds": 0.06007742881774902
+      },
+      {
+        "joined_at": 1777691332.7564917,
+        "left_at": 1777691332.7780242,
+        "duration_seconds": 0.021532535552978516
+      },
+      {
+        "joined_at": 1777691332.7963576,
+        "left_at": 1777691332.8174963,
+        "duration_seconds": 0.021138668060302734
+      },
+      {
+        "joined_at": 1777691788.7410033,
+        "left_at": 1777691788.757359,
+        "duration_seconds": 0.01635575294494629
+      },
+      {
+        "joined_at": 1777691788.777287,
+        "left_at": 1777691788.7977788,
+        "duration_seconds": 0.020491838455200195
+      },
+      {
+        "joined_at": 1777691788.8163426,
+        "left_at": 1777691788.837637,
+        "duration_seconds": 0.021294355392456055
       }
     ],
-    "total_playtime_seconds": 3481.7814087867737,
-    "last_seen": 1777474113.5469177,
-    "join_count": 14,
+    "total_playtime_seconds": 3481.9422993659973,
+    "last_seen": 1777691788.837637,
+    "join_count": 20,
     "first_join": 1777470474.6870556
   },
   "PHung": {
@@ -166,11 +206,21 @@
         "joined_at": 1777470482.0335045,
         "left_at": 1777470486.1871336,
         "duration_seconds": 4.1536290645599365
+      },
+      {
+        "joined_at": 1777691332.9612932,
+        "left_at": null,
+        "duration_seconds": 0
+      },
+      {
+        "joined_at": 1777691788.9719267,
+        "left_at": null,
+        "duration_seconds": 0
       }
     ],
     "total_playtime_seconds": 10.28758692741394,
-    "last_seen": 1777470486.1871336,
-    "join_count": 5,
+    "last_seen": 1777691788.9719267,
+    "join_count": 7,
     "first_join": 1777470474.717342
   },
   "hieudepzai123456": {
@@ -207,12 +257,12 @@
       },
       {
         "joined_at": 1777473983.465894,
-        "left_at": null,
-        "duration_seconds": 0
+        "left_at": 1777691356.1936963,
+        "duration_seconds": 217372.7278022766
       }
     ],
-    "total_playtime_seconds": 481.63986468315125,
-    "last_seen": 1777473983.465894,
+    "total_playtime_seconds": 217854.36766695976,
+    "last_seen": 1777691356.1936963,
     "join_count": 7,
     "first_join": 1777470474.7586775
   },
@@ -300,12 +350,12 @@
       },
       {
         "joined_at": 1777474102.5465462,
-        "left_at": null,
-        "duration_seconds": 0
+        "left_at": 1777691356.2233164,
+        "duration_seconds": 217253.67677021027
       }
     ],
-    "total_playtime_seconds": 339.94892263412476,
-    "last_seen": 1777474102.5465462,
+    "total_playtime_seconds": 217593.6256928444,
+    "last_seen": 1777691356.2233164,
     "join_count": 17,
     "first_join": 1777470475.6467283
   },
@@ -373,12 +423,12 @@
       },
       {
         "joined_at": 1777473912.0956,
-        "left_at": null,
-        "duration_seconds": 0
+        "left_at": 1777691356.2303085,
+        "duration_seconds": 217444.13470864296
       }
     ],
-    "total_playtime_seconds": 3251.1698002815247,
-    "last_seen": 1777473912.0956,
+    "total_playtime_seconds": 220695.30450892448,
+    "last_seen": 1777691356.2303085,
     "join_count": 13,
     "first_join": 1777470476.230437
   },
@@ -459,12 +509,12 @@
       },
       {
         "joined_at": 1777473946.477463,
-        "left_at": null,
-        "duration_seconds": 0
+        "left_at": 1777691356.2378416,
+        "duration_seconds": 217409.76037859917
       }
     ],
-    "total_playtime_seconds": 2109.745642185211,
-    "last_seen": 1777473946.477463,
+    "total_playtime_seconds": 219519.50602078438,
+    "last_seen": 1777691356.2378416,
     "join_count": 6,
     "first_join": 1777470479.729492
   },
@@ -487,12 +537,12 @@
       },
       {
         "joined_at": 1777473958.7868702,
-        "left_at": null,
-        "duration_seconds": 0
+        "left_at": 1777691356.2416513,
+        "duration_seconds": 217397.45478105545
       }
     ],
-    "total_playtime_seconds": 892.777848482132,
-    "last_seen": 1777473958.7868702,
+    "total_playtime_seconds": 218290.23262953758,
+    "last_seen": 1777691356.2416513,
     "join_count": 4,
     "first_join": 1777470484.3463721
   },
@@ -558,5 +608,166 @@
     "last_seen": 1777473906.357147,
     "join_count": 11,
     "first_join": 1777470496.5887914
+  },
+  "Kevfied": {
+    "sessions": [
+      {
+        "joined_at": 1777474200.0,
+        "left_at": 1777691356.2452097,
+        "duration_seconds": 217156.2452096939
+      }
+    ],
+    "total_playtime_seconds": 217156.2452096939,
+    "last_seen": 1777691356.2452097,
+    "join_count": 1,
+    "first_join": 1777474200.0
+  },
+  "TommiMc_VN": {
+    "sessions": [
+      {
+        "joined_at": 1777691332.8390067,
+        "left_at": 1777691332.8574677,
+        "duration_seconds": 0.018460988998413086
+      },
+      {
+        "joined_at": 1777691332.8824341,
+        "left_at": 1777691332.899372,
+        "duration_seconds": 0.016937971115112305
+      },
+      {
+        "joined_at": 1777691333.0076406,
+        "left_at": 1777691333.0259678,
+        "duration_seconds": 0.01832723617553711
+      },
+      {
+        "joined_at": 1777691333.0427246,
+        "left_at": 1777691333.0594227,
+        "duration_seconds": 0.016698122024536133
+      },
+      {
+        "joined_at": 1777691333.0755658,
+        "left_at": 1777691333.092039,
+        "duration_seconds": 0.01647329330444336
+      },
+      {
+        "joined_at": 1777691333.1102953,
+        "left_at": 1777691333.1296778,
+        "duration_seconds": 0.019382476806640625
+      },
+      {
+        "joined_at": 1777691333.14659,
+        "left_at": 1777691333.1646824,
+        "duration_seconds": 0.01809239387512207
+      },
+      {
+        "joined_at": 1777691333.1817102,
+        "left_at": 1777691333.1989083,
+        "duration_seconds": 0.01719808578491211
+      },
+      {
+        "joined_at": 1777691333.216916,
+        "left_at": 1777691333.2369475,
+        "duration_seconds": 0.020031452178955078
+      },
+      {
+        "joined_at": 1777691333.254349,
+        "left_at": 1777691333.2728195,
+        "duration_seconds": 0.01847052574157715
+      },
+      {
+        "joined_at": 1777691333.2902024,
+        "left_at": 1777691333.309621,
+        "duration_seconds": 0.019418716430664062
+      },
+      {
+        "joined_at": 1777691333.3350172,
+        "left_at": 1777691333.3510902,
+        "duration_seconds": 0.016072988510131836
+      },
+      {
+        "joined_at": 1777691333.3687766,
+        "left_at": 1777691333.3858323,
+        "duration_seconds": 0.017055749893188477
+      },
+      {
+        "joined_at": 1777691333.4027147,
+        "left_at": 1777691333.4240773,
+        "duration_seconds": 0.0213625431060791
+      },
+      {
+        "joined_at": 1777691788.8540285,
+        "left_at": 1777691788.872894,
+        "duration_seconds": 0.018865585327148438
+      },
+      {
+        "joined_at": 1777691788.892148,
+        "left_at": 1777691788.9111264,
+        "duration_seconds": 0.018978357315063477
+      },
+      {
+        "joined_at": 1777691789.0224864,
+        "left_at": 1777691789.0403378,
+        "duration_seconds": 0.01785135269165039
+      },
+      {
+        "joined_at": 1777691789.0563405,
+        "left_at": 1777691789.0799704,
+        "duration_seconds": 0.02362990379333496
+      },
+      {
+        "joined_at": 1777691789.0978909,
+        "left_at": 1777691789.1237712,
+        "duration_seconds": 0.02588033676147461
+      },
+      {
+        "joined_at": 1777691789.1435413,
+        "left_at": 1777691789.163927,
+        "duration_seconds": 0.0203857421875
+      },
+      {
+        "joined_at": 1777691789.1837611,
+        "left_at": 1777691789.2007267,
+        "duration_seconds": 0.016965627670288086
+      },
+      {
+        "joined_at": 1777691789.2173731,
+        "left_at": 1777691789.2347429,
+        "duration_seconds": 0.017369747161865234
+      },
+      {
+        "joined_at": 1777691789.252641,
+        "left_at": 1777691789.274432,
+        "duration_seconds": 0.02179098129272461
+      },
+      {
+        "joined_at": 1777691789.2949576,
+        "left_at": 1777691789.3554912,
+        "duration_seconds": 0.06053352355957031
+      },
+      {
+        "joined_at": 1777691789.3768291,
+        "left_at": 1777691789.4964736,
+        "duration_seconds": 0.1196444034576416
+      },
+      {
+        "joined_at": 1777691789.5138385,
+        "left_at": 1777691789.5332472,
+        "duration_seconds": 0.019408702850341797
+      },
+      {
+        "joined_at": 1777691789.5488093,
+        "left_at": 1777691789.5747974,
+        "duration_seconds": 0.025988101959228516
+      },
+      {
+        "joined_at": 1777691789.5947769,
+        "left_at": 1777691789.6154535,
+        "duration_seconds": 0.020676612854003906
+      }
+    ],
+    "total_playtime_seconds": 0.6819515228271484,
+    "last_seen": 1777691789.6154535,
+    "join_count": 28,
+    "first_join": 1777691332.8390067
   }
 }

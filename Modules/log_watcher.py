@@ -30,51 +30,157 @@ def is_port_open(host: str, port: int) -> bool:
         return False
 
 
+def is_minecraft_login_handshake(data: bytes) -> bool:
+    """Check if the received data matches Minecraft login handshake packet format."""
+    if len(data) < 3:
+        return False
+    
+    try:
+        # Minecraft handshake packet structure:
+        # - VarInt packet length (1-3 bytes)
+        # - VarInt packet ID (0x00 for handshake)
+        # - VarInt protocol version
+        # - String server address
+        # - Unsigned short port
+        # - VarInt next state (1 for status, 2 for login)
+        
+        # Basic check: first byte should be reasonable packet length
+        if data[0] < 1 or data[0] > 50:  # Reasonable packet length
+            return False
+            
+        if data[1] != 0x00:  # Must be handshake packet
+            return False
+            
+        # Read protocol version (VarInt after packet ID)
+        offset = 2  # Skip length and packet ID
+        protocol_version = 0
+        for i in range(5):  # Max 5 bytes for VarInt
+            if offset + i >= len(data):
+                break
+            byte = data[offset + i]
+            protocol_version |= (byte & 0x7F) << (7 * i)
+            if not (byte & 0x80):  # Continuation bit
+                offset += i + 1
+                break
+        else:
+            return False
+        
+        # Check if protocol version is reasonable for Minecraft
+        if protocol_version < 47 or protocol_version > 1000:
+            return False
+        
+        # Skip server address (string) and port (unsigned short)
+        # Read string length
+        if offset >= len(data):
+            return False
+        string_length = 0
+        for i in range(3):  # Max 3 bytes for string length
+            if offset + i >= len(data):
+                break
+            byte = data[offset + i]
+            string_length |= (byte & 0x7F) << (7 * i)
+            if not (byte & 0x80):
+                offset += i + 1
+                break
+        else:
+            return False
+        
+        # Skip string content
+        offset += string_length
+        
+        # Skip port (2 bytes)
+        offset += 2
+        
+        # Read next state (VarInt) - this is what we care about!
+        if offset >= len(data):
+            return False
+        
+        next_state = 0
+        for i in range(2):  # Next state is usually 1 byte
+            if offset + i >= len(data):
+                break
+            byte = data[offset + i]
+            next_state |= (byte & 0x7F) << (7 * i)
+            if not (byte & 0x80):
+                break
+        
+        # Only trigger on login state (2), not status state (1)
+        return next_state == 2
+        
+    except Exception:
+        return False
+
+
 def ping_listener():
-    """Background thread that listens for port 25565 connection attempts to auto-start server."""
+    """Background thread that listens for Minecraft client connections to auto-start server."""
     global ping_listener_running, server_status
     
     import socket
     import threading
     
     ping_listener_running = True
-    logger.info("[PingListener] Starting ping listener on port 25565")
+    logger.info("[PingListener] Starting Minecraft client listener on port 25565")
     
     while ping_listener_running:
         try:
             if app_settings.auto_start_on_ping and server_status.state == ServerState.IDLE:
-                # Try to accept a connection on port 25565
-                # If someone tries to connect, the server is not running
-                # We need to detect the connection attempt and start the server
                 try:
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         s.settimeout(1)
                         s.bind(("0.0.0.0", MINECRAFT_PORT))
                         s.listen(1)
-                        logger.info("[PingListener] Waiting for connection on port 25565...")
+                        logger.info("[PingListener] Waiting for Minecraft client connection...")
                         
                         # Wait for a connection attempt
                         conn, addr = s.accept()
-                        logger.info(f"[PingListener] Connection attempt detected from {addr[0]}")
-                        conn.close()
                         
-                        # Start the server
-                        logger.info("[PingListener] Auto-starting server due to connection attempt")
-                        from .server_control import console_controller
-                        import asyncio
+                        # Filter out localhost connections to prevent self-pings
+                        if addr[0] in ['127.0.0.1', '::1', 'localhost']:
+                            logger.debug(f"[PingListener] Ignoring localhost connection from {addr[0]}")
+                            conn.close()
+                            time.sleep(1)
+                            continue
                         
-                        # Start the server in a new thread to avoid blocking
-                        def start_server_thread():
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            loop.run_until_complete(console_controller.start())
-                            loop.close()
+                        logger.info(f"[PingListener] Connection attempt from {addr[0]} - checking for Minecraft login")
                         
-                        start_thread = threading.Thread(target=start_server_thread, daemon=True)
-                        start_thread.start()
+                        # Set timeout for reading handshake data
+                        conn.settimeout(2.0)
                         
-                        # Wait a bit before listening again
-                        time.sleep(5)
+                        try:
+                            # Read more bytes to get full handshake packet for login detection
+                            data = conn.recv(64)  # Read enough for complete handshake packet
+                            
+                            if is_minecraft_login_handshake(data):
+                                logger.info(f"[PingListener] Minecraft login attempt detected from {addr[0]}")
+                                conn.close()
+                                
+                                # Start the server
+                                logger.info("[PingListener] Auto-starting server for Minecraft login")
+                                from .server_control import console_controller
+                                import asyncio
+                                
+                                # Start the server in a new thread to avoid blocking
+                                def start_server_thread():
+                                    loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(loop)
+                                    loop.run_until_complete(console_controller.start())
+                                    loop.close()
+                                
+                                start_thread = threading.Thread(target=start_server_thread, daemon=True)
+                                start_thread.start()
+                                
+                                # Wait a bit before listening again
+                                time.sleep(5)
+                            else:
+                                logger.debug(f"[PingListener] Non-login connection from {addr[0]} - ignoring (status ping or other)")
+                                conn.close()
+                                
+                        except socket.timeout:
+                            logger.debug(f"[PingListener] Timeout reading from {addr[0]} - not a Minecraft client")
+                            conn.close()
+                        except Exception as e:
+                            logger.debug(f"[PingListener] Error reading from {addr[0]}: {e}")
+                            conn.close()
                         
                 except socket.timeout:
                     # No connection, continue listening
@@ -97,7 +203,7 @@ def ping_listener():
             logger.error(f"[PingListener] Listener error: {e}")
             time.sleep(1)
     
-    logger.info("[PingListener] Ping listener stopped")
+    logger.info("[PingListener] Minecraft client listener stopped")
 
 
 def start_ping_listener():
@@ -187,15 +293,17 @@ def scan_for_existing_players():
         logger.error(f"[GhostConsole] Failed to scan for existing players: {e}")
 
 
-# Placeholder functions for player session tracking (will be in player_sessions.py)
+# Import the real session tracking functions
+from .player_sessions import record_player_join as real_record_player_join, record_player_leave as real_record_player_leave
+
 def record_player_join(username: str):
     """Record player session start."""
-    pass
+    real_record_player_join(username)
 
 
 def record_player_leave(username: str):
     """Record player session end."""
-    pass
+    real_record_player_leave(username)
 
 
 def set_windows_power_mode(mode: str) -> bool:
