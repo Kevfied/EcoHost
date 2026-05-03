@@ -11,7 +11,7 @@ from typing import Optional
 
 import logging
 
-from .config import LOG_FILE, LOG_BUFFER_SIZE, STATUS_CHECK_INTERVAL, MINECRAFT_PORT, GRACEFUL_SHUTDOWN_TIMEOUT, stop_initiated_time, server_hung, empty_server_countdown, countdown_active, ecohost_precision_last_mode_change, ecohost_precision_cooldown, ecohost_precision_empty_since
+from .config import LOG_FILE, LOG_BUFFER_SIZE, STATUS_CHECK_INTERVAL, MINECRAFT_PORT, GRACEFUL_SHUTDOWN_TIMEOUT, empty_server_countdown, countdown_active, ecohost_precision_last_mode_change, ecohost_precision_cooldown, ecohost_precision_empty_since
 from .models import PlayerInfo, ServerState, server_status, log_lines, log_lock, app_settings
 from .server_control import console_controller, is_minecraft_process_running
 
@@ -117,6 +117,7 @@ def ping_listener():
     
     import socket
     import threading
+    from .models import app_settings
     
     ping_listener_running = True
     logger.info("[PingListener] Starting Minecraft client listener on port 25565")
@@ -153,6 +154,15 @@ def ping_listener():
                             if is_minecraft_login_handshake(data):
                                 logger.info(f"[PingListener] Minecraft login attempt detected from {addr[0]}")
                                 conn.close()
+                                
+                                # Check maintenance mode and IP whitelist
+                                if app_settings.maintenance_mode:
+                                    # Check if IP is in maintenance whitelist
+                                    if addr[0] not in app_settings.maintenance_ips:
+                                        logger.warning(f"[PingListener] Rejected login from {addr[0]} - maintenance mode active and IP not whitelisted")
+                                        continue
+                                    else:
+                                        logger.info(f"[PingListener] Allowed login from {addr[0]} - maintenance mode but IP whitelisted")
                                 
                                 # Start the server
                                 logger.info("[PingListener] Auto-starting server for Minecraft login")
@@ -475,7 +485,7 @@ def update_ecohost_precision_mode():
 
 def log_watcher():
     """Background thread that monitors server logs and updates player list."""
-    global server_status, log_watcher_running, last_position, stop_initiated_time, server_hung
+    global server_status, log_watcher_running, last_position
     global empty_server_countdown, countdown_active, last_countdown_log, last_window_check, java_was_running, log_lines
     
     log_watcher_running = True
@@ -516,8 +526,9 @@ def log_watcher():
                     if not window_exists and not java_running:
                         server_status.state = ServerState.IDLE
                         server_status.players.clear()
-                        stop_initiated_time = None
-                        server_hung = False
+                        from .models import set_stop_initiated_time, set_server_hung
+                        set_stop_initiated_time(None)
+                        set_server_hung(False)
                         logger.info("[GhostConsole] Stop complete - state changed to IDLE")
                 elif server_status.state != ServerState.STOPPING:
                     if window_exists or java_running:
@@ -531,14 +542,17 @@ def log_watcher():
                         if server_status.state != ServerState.IDLE:
                             server_status.state = ServerState.IDLE
                             server_status.players.clear()
-                            stop_initiated_time = None
-                            server_hung = False
+                            from .models import set_stop_initiated_time, set_server_hung
+                            set_stop_initiated_time(None)
+                            set_server_hung(False)
                 
-                if stop_initiated_time and not server_hung:
-                    elapsed = current_time - stop_initiated_time
+                from .models import get_server_hung, get_stop_initiated_time
+                if get_stop_initiated_time() and not get_server_hung():
+                    elapsed = current_time - get_stop_initiated_time()
                     if elapsed > GRACEFUL_SHUTDOWN_TIMEOUT:
                         logger.warning("[GhostConsole] Server appears hung!")
-                        server_hung = True
+                        from .models import set_server_hung
+                        set_server_hung(True)
 
             if LOG_FILE.exists():
                 current_size = LOG_FILE.stat().st_size
@@ -583,8 +597,13 @@ def log_watcher():
             update_ecohost_precision_mode()
             update_power_mode_scheduling()
             
-            if server_status.state == ServerState.ACTIVE and not server_hung and app_settings.auto_shutdown_enabled:
-                if len(server_status.players) == 0:
+            from .models import get_server_hung, get_start_time
+            if server_status.state == ServerState.ACTIVE and not get_server_hung() and app_settings.auto_shutdown_enabled:
+                # Don't start auto-shutdown if server just started (give it time to load)
+                server_uptime = current_time - get_start_time()
+                startup_grace_period = 30  # 30 seconds grace period after server start
+                
+                if len(server_status.players) == 0 and server_uptime > startup_grace_period:
                     if not countdown_active:
                         empty_server_countdown = current_time
                         countdown_active = True
@@ -601,11 +620,42 @@ def log_watcher():
                             logger.info("[SmartEnergy] Countdown expired - auto-shutting down")
                             countdown_active = False
                             empty_server_countdown = None
-                            server_status.state = ServerState.STOPPING
+                            
+                            # CRITICAL: Send RCON stop command WHILE server is still ACTIVE
+                            # RCON becomes unavailable once server state changes to STOPPING
+                            try:
+                                from .commands import execute_command
+                                logger.info("[SmartEnergy] Sending stop command via RCON (server still ACTIVE)")
+                                rcon_success = execute_command("stop")
+                                if rcon_success:
+                                    logger.info("[SmartEnergy] Stop command sent successfully via RCON")
+                                else:
+                                    logger.warning("[SmartEnergy] RCON failed, will use fallback method")
+                            except Exception as e:
+                                logger.error(f"[SmartEnergy] RCON error: {e}")
+                            
+                            # Now change server state after attempting RCON
+                            from .models import set_server_state
+                            set_server_state(ServerState.STOPPING, "auto-shutdown countdown expired")
+                            
+                            # Start the fallback stop process (will only be used if RCON failed)
                             try:
                                 from .commands import stop_server
                                 import asyncio
-                                asyncio.create_task(stop_server())
+                                import threading
+                                
+                                # Run async stop_server in a new event loop
+                                def stop_server_thread():
+                                    loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(loop)
+                                    try:
+                                        loop.run_until_complete(stop_server())
+                                    finally:
+                                        loop.close()
+                                
+                                stop_thread = threading.Thread(target=stop_server_thread, daemon=True)
+                                stop_thread.start()
+                                logger.info("[SmartEnergy] Server stop process initiated")
                             except Exception as e:
                                 logger.error(f"[SmartEnergy] Auto-shutdown failed: {e}")
                 else:
@@ -617,14 +667,22 @@ def log_watcher():
 
             if server_status.state == ServerState.STOPPING and len(server_status.players) > 0:
                 logger.info("[SmartEnergy] Player joined during shutdown - cancelling shutdown and reverting to ACTIVE")
-                server_status.state = ServerState.ACTIVE
-                stop_initiated_time = None
-                server_hung = False
+                from .models import set_server_state
+                set_server_state(ServerState.ACTIVE, "player joined during shutdown - cancelling")
+                from .models import set_stop_initiated_time, set_server_hung
+                set_stop_initiated_time(None)
+                set_server_hung(False)
 
             time.sleep(1)
 
         except Exception as e:
+            import traceback
             logger.error(f"[GhostConsole] Status monitor error: {e}")
+            logger.error(f"[GhostConsole] Error type: {type(e).__name__}")
+            logger.error(f"[GhostConsole] Full traceback:")
+            for line in traceback.format_exc().split('\n'):
+                if line.strip():
+                    logger.error(f"[GhostConsole] {line}")
             time.sleep(1)
 
     logger.info("[GhostConsole] Status monitor stopped")

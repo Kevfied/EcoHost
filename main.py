@@ -45,11 +45,11 @@ from Modules.config import (
 from Modules.models import (
     ServerState, PlayerInfo, ServerStatus, Settings,
     server_status, app_settings, log_lines, log_lock,
-    ecohost_logs, ecohost_logs_lock, start_time, log_watcher_running,
+    ecohost_logs, ecohost_logs_lock, log_watcher_running,
     java_process_pid, load_settings_from_file, save_settings_to_file,
     PowerResponse, StatusResponse, LogsResponse, ConsoleStatusResponse,
     SettingsResponse, MetricsHistoryResponse, PlayerStatsResponse,
-    PlayerDataResponse
+    PlayerDataResponse, get_start_time
 )
 from Modules.server_control import console_controller, is_minecraft_process_running
 from Modules.log_watcher import start_log_watcher, start_ping_listener, record_player_join, record_player_leave, update_ecohost_precision_mode
@@ -199,11 +199,11 @@ def get_network_status() -> dict[str, bool]:
 
 def attach_to_existing_server() -> bool:
     """Detect and attach to an already-running Minecraft server by window or Java."""
-    global start_time
+    from Modules.models import set_start_time
     
     if PYWINAUTO_AVAILABLE and console_controller.is_console_running():
         logger.info(f"[GhostConsole] Found existing console window '{CONSOLE_WINDOW_TITLE}'")
-        start_time = time.time()
+        set_start_time(time.time())
         
         port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
         if port_open:
@@ -216,7 +216,7 @@ def attach_to_existing_server() -> bool:
     
     if is_minecraft_process_running():
         logger.info("[GhostConsole] Found Java process without window, attaching...")
-        start_time = time.time()
+        set_start_time(time.time())
         
         port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
         if port_open:
@@ -759,6 +759,43 @@ async def update_user_status(
     return {"success": True, "message": f"Account {status}"}
 
 
+@app.post("/settings/maintenance/toggle", response_model=dict)
+async def toggle_maintenance_mode(current_user: User = Depends(require_admin)):
+    """Toggle maintenance mode (admin only)."""
+    global app_settings
+    app_settings.maintenance_mode = not app_settings.maintenance_mode
+    save_settings_to_file()
+    
+    status = "enabled" if app_settings.maintenance_mode else "disabled"
+    logger.info(f"[Settings] Admin '{current_user.username}' {status} maintenance mode")
+    
+    return {
+        "success": True,
+        "maintenance_mode": app_settings.maintenance_mode,
+        "message": f"Maintenance mode {status}"
+    }
+
+
+@app.post("/settings/maintenance/ips", response_model=dict)
+async def update_maintenance_ips(request: dict, current_user: User = Depends(require_admin)):
+    """Update maintenance mode IP whitelist (admin only)."""
+    global app_settings
+    ips_text = request.get("ips", "")
+    
+    # Parse IPs (one per line, filter empty lines)
+    ips = [ip.strip() for ip in ips_text.split('\n') if ip.strip()]
+    app_settings.maintenance_ips = ips
+    save_settings_to_file()
+    
+    logger.info(f"[Settings] Admin '{current_user.username}' updated maintenance IPs: {ips}")
+    
+    return {
+        "success": True,
+        "ips": ips,
+        "message": f"Updated {len(ips)} maintenance IPs"
+    }
+
+
 # =============================================================================
 # Protected Status Endpoint
 # =============================================================================
@@ -773,7 +810,7 @@ async def get_status(current_user: User = require_auth()):
     server_status.ram_usage = ram
 
     if server_status.state == ServerState.ACTIVE:
-        server_status.uptime = time.time() - start_time
+        server_status.uptime = time.time() - get_start_time()
         if server_status.players:
             server_status.last_player_time = time.time()
 
@@ -789,6 +826,17 @@ async def get_status(current_user: User = require_auth()):
         elapsed = time.time() - empty_server_countdown
         countdown_remaining = max(0, app_settings.auto_shutdown_duration - int(elapsed))
 
+    # Calculate estimated average tick time based on system performance
+    avg_tick = 50.0  # Default 50ms (20 TPS)
+    if server_status.state == ServerState.ACTIVE:
+        # Estimate tick time based on CPU usage and player count
+        base_tick = 50.0  # 20 TPS = 50ms per tick
+        cpu_impact = cpu * 0.5  # CPU usage increases tick time
+        player_impact = len(server_status.players) * 2.0  # Each player adds ~2ms
+        avg_tick = base_tick + cpu_impact + player_impact
+        # Cap at reasonable values
+        avg_tick = max(20.0, min(200.0, avg_tick))
+
     return StatusResponse(
         state=server_status.state,
         players=[p.username for p in server_status.players],
@@ -803,6 +851,8 @@ async def get_status(current_user: User = require_auth()):
         countdown_active=countdown_active,
         countdown_remaining=countdown_remaining,
         countdown_total=app_settings.auto_shutdown_duration,
+        avg_tick=avg_tick,
+        maintenance_mode=app_settings.maintenance_mode,
     )
 
 
@@ -820,6 +870,18 @@ async def get_console_status(current_user: User = require_auth()):
 @app.post("/power/start", response_model=PowerResponse)
 async def start_server(request: Request, current_user: User = Depends(require_server_start)):
     """Start the Minecraft server in a visible CMD window."""
+    
+    global server_status
+    
+    # Check maintenance mode
+    if app_settings.maintenance_mode:
+        # Allow admins to start server during maintenance
+        if current_user.role.value != UserRole.ADMIN:
+            return PowerResponse(
+                success=False,
+                message="Server is in Maintenance Mode - Only administrators can start the server",
+                state=server_status.state
+            )
     client_ip = request.client.host if request.client else "unknown"
     
     # Check API rate limiting
@@ -832,8 +894,6 @@ async def start_server(request: Request, current_user: User = Depends(require_se
     
     # Record this request
     record_api_request(client_ip)
-    
-    global server_status
 
     if server_status.state != ServerState.IDLE:
         return PowerResponse(
@@ -911,12 +971,27 @@ async def stop_server(request: Request, current_user: User = Depends(require_per
             state=server_status.state,
         )
 
+    # CRITICAL: Send RCON stop command WHILE server is still ACTIVE
+    # RCON becomes unavailable once server state changes to STOPPING
+    try:
+        from Modules.commands import execute_command
+        logger.info("[PowerStop] Sending stop command via RCON (server still ACTIVE)")
+        rcon_success = execute_command("stop")
+        if rcon_success:
+            logger.info("[PowerStop] Stop command sent successfully via RCON")
+        else:
+            logger.warning("[PowerStop] RCON failed, will use fallback method")
+    except Exception as e:
+        logger.error(f"[PowerStop] RCON error: {e}")
+
     # Record server stop for uptime tracking
     record_server_stop()
     
+    # Now change server state after attempting RCON
     server_status.state = ServerState.STOPPING
     server_hung = False  # Reset hung state
 
+    # Start fallback stop process (will only be used if RCON failed)
     success = await console_controller.stop()
 
     if success:
@@ -1035,6 +1110,8 @@ async def get_settings(current_user: User = require_auth()):
         "rcon_enabled": app_settings.rcon_enabled,
         "rcon_port": app_settings.rcon_port,
         "rcon_password": app_settings.rcon_password,
+        "maintenance_mode": app_settings.maintenance_mode,
+        "maintenance_ips": app_settings.maintenance_ips,
         "ecohost_precision_status": {
             "enabled": app_settings.ecohost_precision_enabled,
             "player_count": player_count,
@@ -1159,7 +1236,7 @@ async def websocket_endpoint(websocket: WebSocket):
             server_status.ram_usage = ram
 
             if server_status.state == ServerState.ACTIVE:
-                server_status.uptime = time.time() - start_time
+                server_status.uptime = time.time() - get_start_time()
 
             # Check console link status
             console_link = console_controller.is_console_running() if PYWINAUTO_AVAILABLE else False
@@ -1169,6 +1246,17 @@ async def websocket_endpoint(websocket: WebSocket):
             countdown_total = app_settings.auto_shutdown_duration
             if countdown_active and empty_server_countdown:
                 countdown_remaining = max(0, app_settings.auto_shutdown_duration - (time.time() - empty_server_countdown))
+
+            # Calculate estimated average tick time based on system performance
+            avg_tick = 50.0  # Default 50ms (20 TPS)
+            if server_status.state == ServerState.ACTIVE:
+                # Estimate tick time based on CPU usage and player count
+                base_tick = 50.0  # 20 TPS = 50ms per tick
+                cpu_impact = cpu * 0.5  # CPU usage increases tick time
+                player_impact = len(server_status.players) * 2.0  # Each player adds ~2ms
+                avg_tick = base_tick + cpu_impact + player_impact
+                # Cap at reasonable values
+                avg_tick = max(20.0, min(200.0, avg_tick))
 
             data = {
                 "state": server_status.state.value,
@@ -1186,6 +1274,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 "countdown_remaining": int(countdown_remaining),
                 "countdown_total": countdown_total,
                 "current_power_mode": app_settings.current_power_mode,
+                "avg_tick": avg_tick,
+                "maintenance_mode": app_settings.maintenance_mode,
             }
 
             await websocket.send_json(data)

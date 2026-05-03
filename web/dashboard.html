@@ -355,13 +355,27 @@
                             </div>
                             <div class="flex items-center gap-1.5 text-xs text-slate-500">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                                 </svg>
-                                <span>Total: <span id="total-uptime-quick">0h</span></span>
-                                <span class="mx-1">|</span>
-                                <span>Sessions: <span id="session-count-quick">0</span></span>
+                                <span>Avg Tick: <span id="avg-tick-quick">--</span>ms | TPS: <span id="tps-quick">--</span></span>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Maintenance Mode Notification -->
+            <div id="dashboard-maintenance-notice" class="hidden mb-6 p-4 bg-orange-900/30 border border-orange-500/30 rounded-xl">
+                <div class="flex items-center gap-3">
+                    <svg class="w-5 h-5 text-orange-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z"/>
+                    </svg>
+                    <div class="flex-1">
+                        <h3 class="text-sm font-semibold text-orange-300">Server is in Maintenance Mode</h3>
+                        <p class="text-xs text-orange-400 mt-1">Only administrators can start the server during maintenance mode</p>
+                    </div>
+                    <div id="maintenance-toggle-indicator" class="px-3 py-1 bg-orange-800/50 rounded-full">
+                        <span class="text-xs font-medium text-orange-300">MAINTENANCE</span>
                     </div>
                 </div>
             </div>
@@ -945,6 +959,51 @@
                             <span id="current-power-mode" class="text-sm font-medium text-green-400">Balanced</span>
                         </div>
                     </div>
+
+                <!-- Maintenance Mode (Admin Only - Danger Zone) -->
+                <div id="maintenance-section" class="mt-6 p-4 bg-red-900/20 border border-red-500/30 rounded-xl">
+                    <div class="flex items-center gap-2 mb-4">
+                        <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z"/>
+                        </svg>
+                        <h3 class="text-lg font-semibold text-red-400">Maintenance Mode</h3>
+                        <span class="text-xs text-red-300 font-semibold">(DANGER ZONE)</span>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <!-- Maintenance Mode Toggle -->
+                        <div class="flex items-center justify-between p-3 bg-red-800/30 rounded-lg">
+                            <div>
+                                <h4 class="text-sm font-medium text-red-300">Enable Maintenance Mode</h4>
+                                <p class="text-xs text-red-400 mt-1">Restricts server access to admins only</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="maintenance-mode-toggle" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-red-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
+                            </label>
+                        </div>
+
+                        <!-- Maintenance IP Whitelist -->
+                        <div class="p-3 bg-red-800/30 rounded-lg">
+                            <h4 class="text-sm font-medium text-red-300 mb-2">Allowed IPs During Maintenance</h4>
+                            <p class="text-xs text-red-400 mb-3">IP addresses that can still start server during maintenance (one per line)</p>
+                            <textarea id="maintenance-ips" class="w-full bg-red-900/50 border border-red-600/50 rounded-lg px-3 py-2 text-red-100 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-red-400" rows="3" placeholder="192.168.1.100&#10;10.0.0.5&#10;127.0.0.1"></textarea>
+                            <button id="save-maintenance-ips" class="mt-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm transition-colors">
+                                Save IPs
+                            </button>
+                        </div>
+
+                        <!-- Maintenance Status -->
+                        <div id="maintenance-status" class="hidden p-3 bg-orange-900/30 border border-orange-500/30 rounded-lg">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                <span class="text-sm text-orange-300">Server is in Maintenance Mode</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 </div>
 
                 <!-- User Management (Admin Only) -->
@@ -1043,6 +1102,7 @@
 
         // Authentication State
         let currentUser = null;
+        let currentUserRole = null;
         const userRoles = {
             ADMIN: 'admin',
             MODERATOR: 'moderator',
@@ -1100,6 +1160,7 @@
             
             document.getElementById('user-name').textContent = currentUser.username;
             document.getElementById('user-initial').textContent = currentUser.username.charAt(0).toUpperCase();
+            currentUserRole = currentUser.role;  // Set current user role for maintenance mode
             
             const roleEl = document.getElementById('user-role');
             roleEl.textContent = currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1);
@@ -1279,6 +1340,13 @@
         const manualPowerMode = document.getElementById('manual-power-mode');
         const ecohostPrecisionToggle = document.getElementById('ecohost-precision-toggle');
         const powerScheduleToggle = document.getElementById('power-schedule-toggle');
+        
+        // Maintenance mode elements
+        const maintenanceModeToggle = document.getElementById('maintenance-mode-toggle');
+        const maintenanceIps = document.getElementById('maintenance-ips');
+        const saveMaintenanceIps = document.getElementById('save-maintenance-ips');
+        const maintenanceStatus = document.getElementById('maintenance-status');
+        const dashboardMaintenanceNotice = document.getElementById('dashboard-maintenance-notice');
 
         // Sidebar navigation
         document.querySelectorAll('.sidebar-item').forEach(item => {
@@ -1313,10 +1381,29 @@
 
             // Update power button (Professional three-state system)
             if (state === 'IDLE') {
-                // OFFLINE: Show START button
+                // OFFLINE: Show START button (check maintenance mode)
                 powerBtn.classList.remove('active');
-                powerText.textContent = 'Start';
-                powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+                
+                // Check if maintenance mode is active and user is not admin
+                if (data.maintenance_mode && currentUserRole !== 'admin') {
+                    powerText.textContent = 'Server is in Maintenance';
+                    powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z"/>';
+                    powerBtn.disabled = true;
+                    powerBtn.classList.add('opacity-60', 'cursor-not-allowed');
+                    // Override CSS to match maintenance notice styling
+                    powerBtn.style.background = 'rgba(251, 146, 60, 0.3)'; // orange-900/30
+                    powerBtn.style.border = '1px solid rgba(251, 146, 60, 0.3)'; // border-orange-500/30
+                    powerBtn.style.boxShadow = '0 2px 8px rgba(251, 146, 60, 0.3)'; // orange glow
+                } else {
+                    powerText.textContent = 'Start';
+                    powerIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+                    powerBtn.disabled = false;
+                    powerBtn.classList.remove('opacity-60', 'cursor-not-allowed', 'bg-orange-900/30', 'border-orange-500/30');
+                    // Reset inline styles to restore normal green button
+                    powerBtn.style.background = '';
+                    powerBtn.style.border = '';
+                    powerBtn.style.boxShadow = '';
+                }
             } else if (state === 'ACTIVE') {
                 // ONLINE: Show STOP button
                 powerBtn.classList.add('active');
@@ -1413,16 +1500,17 @@
             const quickUptime = document.getElementById('uptime-quick');
             if (quickUptime) quickUptime.textContent = uptimeStr;
             
-            // Update total uptime (persistent across restarts)
-            const totalUptimeEl = document.getElementById('total-uptime-quick');
-            if (totalUptimeEl && data.total_uptime) {
-                totalUptimeEl.textContent = formatDuration(data.total_uptime);
-            }
-            
-            // Update session count
-            const sessionCountEl = document.getElementById('session-count-quick');
-            if (sessionCountEl && data.session_count !== undefined) {
-                sessionCountEl.textContent = data.session_count;
+            // Update average tick time and TPS
+            const avgTickEl = document.getElementById('avg-tick-quick');
+            const tpsEl = document.getElementById('tps-quick');
+            if (avgTickEl && data.avg_tick !== undefined) {
+                avgTickEl.textContent = data.avg_tick.toFixed(1);
+                // Calculate TPS (1000ms / tick_time)
+                const tps = data.avg_tick > 0 ? (1000 / data.avg_tick).toFixed(1) : '--';
+                if (tpsEl) tpsEl.textContent = tps;
+            } else {
+                if (avgTickEl) avgTickEl.textContent = '--';
+                if (tpsEl) tpsEl.textContent = '--';
             }
 
             // Update current power mode
@@ -2945,6 +3033,17 @@
                 
                 // Update manual power mode dropdown to match current power mode
                 manualPowerMode.value = data.current_power_mode || 'balanced';
+                
+                // Load maintenance mode settings
+                maintenanceModeToggle.checked = data.maintenance_mode || false;
+                maintenanceIps.value = (data.maintenance_ips || []).join('\n');
+                
+                // Update dashboard maintenance notice visibility
+                if (data.maintenance_mode) {
+                    dashboardMaintenanceNotice.classList.remove('hidden');
+                } else {
+                    dashboardMaintenanceNotice.classList.add('hidden');
+                }
             } catch (e) {
                 console.error('Failed to load settings:', e);
             }
@@ -2998,8 +3097,14 @@
                     const settingsResponse = await fetch('/settings');
                     const settingsData = await settingsResponse.json();
                     // Update UI toggles to show auto modes are disabled
-                    ecohostPrecisionToggle.checked = settingsData.ecohost_precision_enabled;
-                    powerScheduleToggle.checked = settingsData.power_mode_scheduling_enabled;
+                    ecohostPrecisionToggle.checked = data.ecohost_precision_enabled;
+                    powerScheduleToggle.checked = data.power_mode_scheduling_enabled;
+                    manualPowerMode.value = data.current_power_mode;
+                    
+                    // Load maintenance mode settings
+                    maintenanceModeToggle.checked = data.maintenance_mode || false;
+                    maintenanceIps.value = (data.maintenance_ips || []).join('\n');
+                    
                     // Update current power mode text and color
                     const modeMap = {
                         'ultimate_performance': 'Ultimate Performance',
@@ -3034,6 +3139,91 @@
         });
         
         shutdownDuration.addEventListener('change', saveSettings);
+
+        // Maintenance mode toggle handler
+        maintenanceModeToggle.addEventListener('change', async () => {
+            console.log('Maintenance mode toggle clicked, current state:', maintenanceModeToggle.checked);
+            try {
+                const response = await fetch('/settings/maintenance/toggle', {
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                console.log('Response status:', response.status);
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                if (data.success) {
+                    console.log(`Maintenance mode ${data.maintenance_mode ? 'enabled' : 'disabled'}`);
+                    // Set checkbox to match backend state (not the user's clicked state)
+                    maintenanceModeToggle.checked = data.maintenance_mode;
+                    updateMaintenanceStatus(data.maintenance_mode);
+                } else {
+                    console.error('Backend returned error:', data.message);
+                    alert(data.message);
+                    // Revert toggle to original state before click
+                    maintenanceModeToggle.checked = !maintenanceModeToggle.checked;
+                }
+            } catch (e) {
+                console.error('Failed to toggle maintenance mode:', e);
+                alert('Failed to toggle maintenance mode: ' + e.message);
+                // Revert toggle to original state before click
+                maintenanceModeToggle.checked = !maintenanceModeToggle.checked;
+            }
+        });
+
+        // Save maintenance IPs handler
+        saveMaintenanceIps.addEventListener('click', async () => {
+            try {
+                const ips = maintenanceIps.value;
+                const response = await fetch('/settings/maintenance/ips', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ips }),
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log(`Updated ${data.ips.length} maintenance IPs`);
+                    alert(`Updated ${data.ips.length} maintenance IPs`);
+                } else {
+                    alert(data.message);
+                }
+            } catch (e) {
+                console.error('Failed to update maintenance IPs:', e);
+                alert('Failed to update maintenance IPs');
+            }
+        });
+
+        // Update maintenance status display
+        function updateMaintenanceStatus(isMaintenance) {
+            console.log('updateMaintenanceStatus called with:', isMaintenance);
+            console.log('maintenanceStatus element:', maintenanceStatus);
+            console.log('dashboardMaintenanceNotice element:', dashboardMaintenanceNotice);
+            console.log('currentUserRole:', currentUserRole);
+            
+            // Update settings page maintenance status
+            if (isMaintenance) {
+                maintenanceStatus.classList.remove('hidden');
+            } else {
+                maintenanceStatus.classList.add('hidden');
+            }
+            
+            // Update dashboard maintenance notice (visible to all users)
+            if (isMaintenance) {
+                dashboardMaintenanceNotice.classList.remove('hidden');
+            } else {
+                dashboardMaintenanceNotice.classList.add('hidden');
+            }
+            
+            // Update start button state by calling updateUI with current data
+            // We need to simulate the data structure that updateUI expects
+            const currentData = {
+                state: currentState,
+                maintenance_mode: isMaintenance
+            };
+            updateUI(currentData);
+        }
 
         // Load settings on initialization
         loadSettings();

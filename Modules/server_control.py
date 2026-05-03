@@ -96,8 +96,7 @@ class GhostConsoleController:
 
     async def start(self) -> bool:
         """Start the Minecraft server in a visible CMD window with title."""
-        global start_time, stop_initiated_time, server_hung
-
+        
         if not self.run_bat.exists():
             logger.error(f"[GhostConsole] run.bat not found at {self.run_bat}")
             return False
@@ -105,10 +104,12 @@ class GhostConsoleController:
         # Check if window already exists
         if self.is_console_running():
             logger.info("[GhostConsole] Console window already exists, attaching...")
-            from models import start_time
-            start_time = time.time()
-            stop_initiated_time = None
-            server_hung = False
+            from .models import set_start_time, set_stop_initiated_time, set_server_hung, server_status
+            set_start_time(time.time())
+            set_stop_initiated_time(None)
+            set_server_hung(False)
+            from .models import set_server_state
+            set_server_state(ServerState.ACTIVE, "attached to existing window")
             return True
 
         try:
@@ -133,10 +134,12 @@ pause'''
             
             if self.is_console_running():
                 logger.info(f"[GhostConsole] Console window '{self.window_title}' created successfully")
-                from models import start_time
-                start_time = time.time()
-                stop_initiated_time = None
-                server_hung = False
+                from .models import set_start_time, set_stop_initiated_time, set_server_hung, server_status
+                set_start_time(time.time())
+                set_stop_initiated_time(None)
+                set_server_hung(False)
+                from .models import set_server_state
+                set_server_state(ServerState.ACTIVE, "server started successfully")
                 return True
             else:
                 logger.error("[GhostConsole] Window did not appear after start")
@@ -196,11 +199,11 @@ pause'''
 
     async def send_stop_command(self) -> bool:
         """Send 'stop' command to the console window using pywinauto."""
-        global stop_initiated_time
         
         success = await self.send_command("stop")
         if success:
-            stop_initiated_time = time.time()
+            from .models import set_stop_initiated_time
+            set_stop_initiated_time(time.time())
         return success
 
     async def stop(self) -> bool:
@@ -210,16 +213,16 @@ pause'''
         2. Wait indefinitely for graceful shutdown
         3. Mark as 'hung' if takes longer than 60s (but DO NOT kill)
         """
-        global stop_initiated_time, server_hung
-
+        
         window_exists = self.is_console_running()
         java_running = is_minecraft_process_running()
 
         # Check if server is already offline
         if not window_exists and not java_running:
             logger.info("[GhostConsole] Server already offline")
-            stop_initiated_time = None
-            server_hung = False
+            from .models import set_stop_initiated_time, set_server_hung
+            set_stop_initiated_time(None)
+            set_server_hung(False)
             return True
 
         # Try graceful stop via window
@@ -235,28 +238,31 @@ pause'''
             logger.warning("[GhostConsole] Please stop the server manually or close the Java process")
             return False
 
-        # Wait for server to stop gracefully (NO TIMEOUT - prevent corruption)
+        # Wait for server to stop gracefully (with timeout to prevent infinite loops)
         wait_start = time.time()
         last_log = time.time()
         java_was_running = True
+        shutdown_timeout = 300  # 5 minutes max
         
-        while True:
+        while time.time() - wait_start < shutdown_timeout:
             window_exists = self.is_console_running()
             java_running = is_minecraft_process_running()
             
             # Abort shutdown if state changed back to ACTIVE (player joined during shutdown)
             if server_status.state == ServerState.ACTIVE:
                 logger.info("[GhostConsole] Shutdown aborted - player joined during shutdown")
-                stop_initiated_time = None
-                server_hung = False
+                from .models import set_stop_initiated_time, set_server_hung
+                set_stop_initiated_time(None)
+                set_server_hung(False)
                 return True
             
             # Check if server stopped completely
             if not window_exists and not java_running:
                 elapsed = time.time() - wait_start
                 logger.info(f"[GhostConsole] Server stopped gracefully after {elapsed:.1f}s")
-                stop_initiated_time = None
-                server_hung = False
+                from .models import set_stop_initiated_time, set_server_hung
+                set_stop_initiated_time(None)
+                set_server_hung(False)
                 return True
             
             # Java just stopped but window still exists (CMD at "Press any key" prompt)
@@ -276,9 +282,10 @@ pause'''
             
             # Mark as hung after 60s but keep waiting (don't kill)
             elapsed = time.time() - wait_start
-            if elapsed > GRACEFUL_SHUTDOWN_TIMEOUT and not server_hung:
+            from .models import get_server_hung, set_server_hung
+            if elapsed > GRACEFUL_SHUTDOWN_TIMEOUT and not get_server_hung():
                 logger.warning("[GhostConsole] Server is taking longer than 60s to stop. This is normal for large worlds. Continuing to wait...")
-                server_hung = True
+                set_server_hung(True)
             
             # Log progress every 30s
             if time.time() - last_log > 30:
@@ -286,6 +293,13 @@ pause'''
                 last_log = time.time()
             
             await asyncio.sleep(1)
+
+        # Timeout reached
+        logger.error(f"[GhostConsole] Server failed to stop within {shutdown_timeout}s timeout")
+        from .models import set_stop_initiated_time, set_server_hung
+        set_stop_initiated_time(None)
+        set_server_hung(False)
+        return False
 
 
 # Create global controller instance

@@ -3,12 +3,20 @@ Data models, enums, and response classes for MC-EcoHost.
 """
 
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+
+# Global variables for thread-safe access
+start_time: float = 0.0
+stop_initiated_time: Optional[float] = None
+server_hung: bool = False
 
 # =============================================================================
 # Enums
@@ -20,6 +28,72 @@ class ServerState(str, Enum):
     STARTING = "STARTING"
     ACTIVE = "ACTIVE"
     STOPPING = "STOPPING"
+
+
+# Thread-safe state management
+state_lock = threading.Lock()
+
+# Thread-safe global variable locks
+time_lock = threading.Lock()
+shutdown_lock = threading.Lock()
+
+def get_start_time() -> float:
+    """Thread-safe get start_time."""
+    with time_lock:
+        return start_time
+
+def set_start_time(value: float):
+    """Thread-safe set start_time."""
+    with time_lock:
+        global start_time
+        start_time = value
+
+def get_stop_initiated_time() -> Optional[float]:
+    """Thread-safe get stop_initiated_time."""
+    with shutdown_lock:
+        return stop_initiated_time
+
+def set_stop_initiated_time(value: Optional[float]):
+    """Thread-safe set stop_initiated_time."""
+    with shutdown_lock:
+        global stop_initiated_time
+        stop_initiated_time = value
+
+def get_server_hung() -> bool:
+    """Thread-safe get server_hung."""
+    with shutdown_lock:
+        return server_hung
+
+def set_server_hung(value: bool):
+    """Thread-safe set server_hung."""
+    with shutdown_lock:
+        global server_hung
+        server_hung = value
+
+def is_valid_transition(from_state: ServerState, to_state: ServerState) -> bool:
+    """Check if state transition is valid."""
+    valid_transitions = {
+        ServerState.IDLE: [ServerState.STARTING, ServerState.ACTIVE],  # Allow direct IDLE -> ACTIVE for auto-start
+        ServerState.STARTING: [ServerState.ACTIVE, ServerState.IDLE],
+        ServerState.ACTIVE: [ServerState.STOPPING, ServerState.IDLE],
+        ServerState.STOPPING: [ServerState.ACTIVE, ServerState.IDLE],
+    }
+    return to_state in valid_transitions.get(from_state, [])
+
+def set_server_state(new_state: ServerState, reason: str = "") -> bool:
+    """Thread-safe state transition with validation."""
+    global server_status
+    
+    with state_lock:
+        old_state = server_status.state
+        
+        if not is_valid_transition(old_state, new_state):
+            logger.warning(f"[State] Invalid transition: {old_state} -> {new_state} ({reason})")
+            return False
+            
+        server_status.state = new_state
+        logger.info(f"[State] {old_state} -> {new_state} ({reason})")
+        return True
 
 
 # =============================================================================
@@ -58,6 +132,10 @@ class Settings:
     rcon_enabled: bool = False
     rcon_port: int = 25575
     rcon_password: str = "Kersh159357"
+    
+    # Maintenance Mode Settings
+    maintenance_mode: bool = False
+    maintenance_ips: list[str] = field(default_factory=list)  # IPs allowed during maintenance
 
 
 # =============================================================================
@@ -153,6 +231,8 @@ class StatusResponse(BaseModel):
     countdown_active: bool = False  # True if auto-shutdown countdown is running
     countdown_remaining: int = 0  # Seconds remaining until shutdown
     countdown_total: int = 0  # Total countdown duration in seconds
+    avg_tick: float = 0.0  # Average tick time in milliseconds
+    maintenance_mode: bool = False  # Whether maintenance mode is enabled
 
 
 class LogsResponse(BaseModel):
