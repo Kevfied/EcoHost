@@ -233,7 +233,7 @@ def parse_player_joined(line: str) -> Optional[str]:
         r"joined the game.*?: (\S+)",
         r"(\S+) has joined",
         r"UUID of player (\S+) is",
-        r"(\S+)\[.*?\] logged in",
+        r"(\S+)\[.*?\] logged in with entity id",
         r"(\S+) made the connection",
         r"(\S+) joined",
     ]
@@ -242,8 +242,26 @@ def parse_player_joined(line: str) -> Optional[str]:
         if match:
             username = match.group(1)
             if username and username != "0":
-                logger.debug(f"[PlayerParser] Matched player join: {username} from line: {line}")
-                return username
+                # Filter out mod messages that could cause false positives
+                exclude_patterns = [
+                    "Player [",  # Distant Horizons messages
+                    "API/]: Player [",  # Distant Horizons API messages
+                    "joined.",  # Distant Horizons format (different from "joined the game")
+                    "disconnected.",  # Distant Horizons disconnect messages
+                    "Using enhanced recipe sync for player",  # ModernFix mod messages
+                ]
+                
+                should_exclude = False
+                for exclude_pattern in exclude_patterns:
+                    if exclude_pattern in line:
+                        should_exclude = True
+                        break
+                
+                if not should_exclude:
+                    logger.debug(f"[PlayerParser] Matched player join: {username} from line: {line}")
+                    return username
+                else:
+                    logger.debug(f"[PlayerParser] Excluded false positive: {username} from line: {line}")
     return None
 
 
@@ -251,15 +269,30 @@ def parse_player_left(line: str) -> Optional[str]:
     """Parse player leave from log line."""
     patterns = [
         r"<([^>]+)> left the game",
-        r"([\w.]+) left the game",
+        r"(\S+) left the game",
     ]
     for pattern in patterns:
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
             username = match.group(1)
             if username and username != "0":
-                logger.debug(f"[PlayerParser] Matched player left: {username} from line: {line[:100]}")
-                return username
+                # Filter out mod messages that could cause false positives
+                exclude_patterns = [
+                    "API/]: Player [",  # Distant Horizons API messages
+                    "disconnected.",  # Distant Horizons disconnect messages
+                ]
+                
+                should_exclude = False
+                for exclude_pattern in exclude_patterns:
+                    if exclude_pattern in line:
+                        should_exclude = True
+                        break
+                
+                if not should_exclude:
+                    logger.debug(f"[PlayerParser] Matched player left: {username} from line: {line[:100]}")
+                    return username
+                else:
+                    logger.debug(f"[PlayerParser] Excluded false positive left: {username} from line: {line[:100]}")
     return None
 
 

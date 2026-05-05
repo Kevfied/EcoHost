@@ -109,12 +109,23 @@ class PlayerInfo:
 
 @dataclass
 class ServerStatus:
-    state: ServerState = ServerState.IDLE
+    _state: ServerState = field(default=ServerState.IDLE, init=False)
     players: list[PlayerInfo] = field(default_factory=list)
     cpu_usage: float = 0.0
     ram_usage: float = 0.0
     uptime: float = 0.0
     last_player_time: float = field(default_factory=time.time)
+    
+    @property
+    def state(self) -> ServerState:
+        return self._state
+    
+    @state.setter
+    def state(self, value: ServerState):
+        # Always clear players when going to IDLE state
+        if value == ServerState.IDLE and self._state != ServerState.IDLE:
+            self.players.clear()
+        self._state = value
 
 
 @dataclass

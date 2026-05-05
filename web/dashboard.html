@@ -458,6 +458,38 @@
                     <div class="text-slate-500">Waiting for logs...</div>
                 </div>
             </div>
+
+            <!-- Danger Zone - Admin Only -->
+            <div id="danger-zone" class="mt-6 mb-6 ${currentUserRole === 'admin' ? '' : 'hidden'}">
+                <div class="p-4 bg-red-900/20 border border-red-500/30 rounded-xl">
+                    <div class="flex items-center gap-2 mb-4">
+                        <svg class="w-5 h-5 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/>
+                        </svg>
+                        <h3 class="text-lg font-semibold text-red-400">Emergency Shutdown</h3>
+                        <span class="text-xs text-red-300 font-semibold">(DANGER ZONE)</span>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between p-3 bg-red-800/30 rounded-lg">
+                            <div>
+                                <h4 class="text-sm font-medium text-red-300">Kill Server Process</h4>
+                                <p class="text-xs text-red-400 mt-1">Last resort for frozen/crashed servers</p>
+                            </div>
+                            <button id="emergency-shutdown-button" 
+                                    onclick="emergencyShutdown()"
+                                    class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 transform hover:scale-105 active:scale-95 shadow-lg hover:shadow-red-600/25 min-w-[140px]">
+                                <span class="flex items-center justify-center gap-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                    </svg>
+                                    Emergency Shutdown
+                                </span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Players Page -->
@@ -1812,11 +1844,25 @@
 
         // Update resource gauges from status updates
         function updateResourcesFromStatus(data) {
+            // Update CPU and RAM gauges
             document.getElementById('resources-cpu-value').textContent = `${Math.round(data.cpu_usage)}%`;
             document.getElementById('resources-cpu-bar').style.width = `${data.cpu_usage}%`;
             
             document.getElementById('resources-ram-value').textContent = `${Math.round(data.ram_usage)}%`;
             document.getElementById('resources-ram-bar').style.width = `${data.ram_usage}%`;
+            
+            // Update TPS and Avg Tick in status bar
+            const avgTickEl = document.getElementById('avg-tick-quick');
+            const tpsEl = document.getElementById('tps-quick');
+            if (avgTickEl && data.avg_tick !== undefined) {
+                avgTickEl.textContent = data.avg_tick.toFixed(1);
+                // Calculate TPS (1000ms / tick_time)
+                const tps = data.avg_tick > 0 ? (1000 / data.avg_tick).toFixed(1) : '--';
+                if (tpsEl) tpsEl.textContent = tps;
+            } else {
+                if (avgTickEl) avgTickEl.textContent = '--';
+                if (tpsEl) tpsEl.textContent = '--';
+            }
         }
 
         // =============================================================================
@@ -1894,9 +1940,9 @@
             }
             
             container.innerHTML = filtered.map(player => `
-                <div class="player-item flex items-center justify-between p-4 bg-slate-800/50 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer" 
+                <div class="player-item flex items-center justify-between p-4 bg-slate-800/50 rounded-xl hover:bg-slate-800 transition-colors group" 
                      data-username="${player.username}">
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-3 flex-1" onclick="openPlayerModal(allPlayers.find(p => p.username === '${player.username}'))">
                         <img src="https://mc-heads.net/avatar/${player.username}/64" 
                              alt="${player.username}" 
                              class="w-12 h-12 rounded-lg bg-slate-700"
@@ -1915,6 +1961,15 @@
                     </div>
                     <div class="flex items-center gap-3">
                         <span class="text-sm text-slate-500">Joined ${player.join_count}x</span>
+                        ${hasPermission('player_management') && currentUserRole === 'admin' ? `
+                        <button onclick="deletePlayer('${player.username}', event)" 
+                                class="p-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 hover:text-red-300 transition-all opacity-0 group-hover:opacity-100"
+                                title="Delete player from EcoHost memory">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                            </svg>
+                        </button>
+                        ` : ''}
                         <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                         </svg>
@@ -1922,14 +1977,7 @@
                 </div>
             `).join('');
             
-            // Add click handlers
-            container.querySelectorAll('.player-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    const username = item.dataset.username;
-                    const player = allPlayers.find(p => p.username === username);
-                    if (player) openPlayerModal(player);
-                });
-            });
+            // Click handlers are now inline to avoid conflicts with delete button
         }
 
         function formatDuration(seconds) {
@@ -1951,6 +1999,157 @@
             if (!timestamp) return 'Unknown';
             const date = new Date(timestamp * 1000);
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        async function deletePlayer(username, event) {
+            event.stopPropagation(); // Prevent opening the player modal
+            
+            if (!confirm(`Are you sure you want to delete "${username}" from EcoHost memory?\n\nThis will:\n- Remove them from the player list\n- Delete their playtime statistics\n- Remove them from online players if currently online\n\nThis action cannot be undone.`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/players/${encodeURIComponent(username)}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Show success message
+                    showNotification(`Player "${username}" has been removed from EcoHost memory`, 'success');
+                    
+                    // Refresh the player list and stats
+                    await fetchPlayerStats();
+                    
+                    // Update dashboard player counts
+                    updateDashboardPlayerCounts();
+                } else {
+                    showNotification(`Failed to delete player: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error deleting player:', error);
+                showNotification('Failed to delete player - server error', 'error');
+            }
+        }
+
+        // Notification system to prevent stacking
+        let activeNotifications = [];
+        const MAX_NOTIFICATIONS = 3;
+        
+        function showNotification(message, type = 'info') {
+            // Remove oldest notification if we have too many
+            if (activeNotifications.length >= MAX_NOTIFICATIONS) {
+                const oldest = activeNotifications.shift();
+                removeNotification(oldest);
+            }
+            
+            // Create notification container
+            const container = document.createElement('div');
+            container.className = 'notification-container fixed top-4 right-4 z-50 flex flex-col gap-2';
+            
+            // Create notification element with glass morphism design
+            const notification = document.createElement('div');
+            notification.className = `glass-card rounded-xl p-4 flex items-center gap-3 min-w-[300px] max-w-[400px] transform translate-x-full transition-all duration-300`;
+            
+            // Add type-specific styling
+            let iconSvg = '';
+            let borderClass = '';
+            
+            if (type === 'success') {
+                borderClass = 'border-l-4 border-l-green-400';
+                iconSvg = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>';
+            } else if (type === 'error') {
+                borderClass = 'border-l-4 border-l-red-400';
+                iconSvg = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>';
+            } else {
+                borderClass = 'border-l-4 border-l-blue-400';
+                iconSvg = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>';
+            }
+            
+            notification.className += ` ${borderClass}`;
+            
+            // Set icon color based on type
+            const iconColor = type === 'success' ? 'text-green-400' : 
+                            type === 'error' ? 'text-red-400' : 'text-blue-400';
+            
+            notification.innerHTML = `
+                <svg class="w-5 h-5 ${iconColor} flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    ${iconSvg}
+                </svg>
+                <span class="text-white text-sm flex-1">${message}</span>
+                <button onclick="removeNotification(this.parentElement.parentElement)" class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            `;
+            
+            container.appendChild(notification);
+            document.body.appendChild(container);
+            
+            // Track this notification
+            activeNotifications.push(container);
+            
+            // Slide in animation
+            setTimeout(() => {
+                notification.classList.remove('translate-x-full');
+                notification.classList.add('translate-x-0');
+            }, 50);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                removeNotification(container);
+            }, 5000);
+        }
+        
+        function removeNotification(container) {
+            if (!container || !container.parentElement) return;
+            
+            const notification = container.querySelector('.glass-card');
+            if (notification) {
+                notification.classList.remove('translate-x-0');
+                notification.classList.add('translate-x-full');
+            }
+            
+            setTimeout(() => {
+                if (container.parentElement) {
+                    document.body.removeChild(container);
+                }
+                // Remove from active notifications
+                const index = activeNotifications.indexOf(container);
+                if (index > -1) {
+                    activeNotifications.splice(index, 1);
+                }
+            }, 300);
+        }
+
+        function updateDashboardPlayerCounts() {
+            // Update player count displays after deletion
+            const playerCount = document.getElementById('player-count');
+            const playerCount2 = document.getElementById('player-count-2');
+            const quickPlayerCount = document.getElementById('player-count-quick');
+            
+            // Get current player count from server status or calculate from displayed players
+            const currentCount = allPlayers ? allPlayers.filter(p => p.is_online).length : 0;
+            const maxPlayers = 20;
+            
+            if (playerCount) playerCount.textContent = `${currentCount} / ${maxPlayers}`;
+            if (playerCount2) playerCount2.textContent = `${currentCount} / ${maxPlayers}`;
+            if (quickPlayerCount) quickPlayerCount.textContent = `${currentCount} / ${maxPlayers}`;
+            
+            // Update player grid if on dashboard
+            const playerGrid = document.getElementById('player-grid');
+            if (playerGrid && currentCount === 0) {
+                playerGrid.innerHTML = `
+                    <div class="col-span-full text-center py-8">
+                        <p class="text-slate-500">No players online</p>
+                    </div>
+                `;
+            }
         }
 
         function openPlayerModal(player) {
@@ -3223,6 +3422,143 @@
                 maintenance_mode: isMaintenance
             };
             updateUI(currentData);
+        }
+
+        // Emergency Shutdown Functions
+        function openEmergencyShutdownCap() {
+            const cap = document.getElementById('emergency-shutdown-cap');
+            const button = document.getElementById('emergency-shutdown-button');
+            
+            // Open the cap to reveal the emergency shutdown button
+            cap.classList.add('hidden');
+            button.classList.remove('hidden');
+        }
+
+        async function emergencyShutdown() {
+            // Generate random confirmation number (5-6 digits)
+            const confirmNumber = Math.floor(Math.random() * 900000) + 100000;
+            
+            // Create modal dialog for confirmation
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-red-900 border-2 border-red-600 rounded-lg p-6 max-w-md mx-4">
+                    <div class="text-center">
+                        <div class="flex items-center justify-center mb-4">
+                            <svg class="w-12 h-12 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/>
+                            </svg>
+                        </div>
+                        <h3 class="text-xl font-bold text-red-400 mb-4">EMERGENCY SHUTDOWN CONFIRMATION</h3>
+                        <div class="text-left text-sm text-red-200 mb-4 space-y-2">
+                            <p>⚠️ This will:</p>
+                            <ul class="list-disc list-inside space-y-1 ml-2">
+                                <li>KILL the Minecraft server process immediately</li>
+                                <li>STOP all RCON and console commands</li>
+                                <li>Force terminate without graceful shutdown</li>
+                                <li>Potentially corrupt world data</li>
+                            </ul>
+                            <p class="text-yellow-300 font-semibold">This is a LAST RESORT for frozen/crashed servers only!</p>
+                        </div>
+                        <div class="bg-black bg-opacity-50 rounded p-3 mb-4">
+                            <p class="text-sm text-red-300 mb-2">Type this confirmation number to proceed:</p>
+                            <p class="text-2xl font-mono font-bold text-yellow-400">${confirmNumber}</p>
+                        </div>
+                        <input type="text" id="confirmInput" placeholder="Enter confirmation number" 
+                               class="w-full px-3 py-2 bg-black bg-opacity-50 border border-red-600 rounded text-white text-center font-mono text-lg focus:outline-none focus:border-red-400 mb-4">
+                        <div class="flex space-x-3">
+                            <button id="cancelBtn" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition-colors">
+                                Cancel
+                            </button>
+                            <button id="confirmBtn" class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded transition-colors">
+                                Confirm Emergency Shutdown
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Focus on input field
+            const input = document.getElementById('confirmInput');
+            input.focus();
+            
+            return new Promise((resolve) => {
+                const cancelBtn = document.getElementById('cancelBtn');
+                const confirmBtn = document.getElementById('confirmBtn');
+                
+                const cleanup = () => {
+                    document.body.removeChild(modal);
+                };
+                
+                const handleCancel = () => {
+                    cleanup();
+                    resolve(false);
+                };
+                
+                const handleConfirm = () => {
+                    if (input.value.trim() === confirmNumber.toString()) {
+                        cleanup();
+                        resolve(true);
+                    } else {
+                        input.classList.add('border-red-400');
+                        input.classList.add('animate-pulse');
+                        setTimeout(() => {
+                            input.classList.remove('border-red-400');
+                            input.classList.remove('animate-pulse');
+                        }, 1000);
+                    }
+                };
+                
+                cancelBtn.addEventListener('click', handleCancel);
+                confirmBtn.addEventListener('click', handleConfirm);
+                
+                input.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        handleConfirm();
+                    } else if (e.key === 'Escape') {
+                        handleCancel();
+                    }
+                });
+                
+                // Close on backdrop click
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) {
+                        handleCancel();
+                    }
+                });
+            }).then(async (confirmed) => {
+                if (!confirmed) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/emergency-shutdown', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        showNotification('Emergency shutdown initiated - server process killed', 'success');
+                        
+                        // Update UI to show server is stopping
+                        updateUI({ state: 'STOPPING' });
+                        
+                        // Hide emergency shutdown controls
+                        document.getElementById('danger-zone').classList.add('hidden');
+                    } else {
+                        showNotification(`Emergency shutdown failed: ${result.message}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Emergency shutdown error:', error);
+                    showNotification('Emergency shutdown failed - network error', 'error');
+                }
+            });
         }
 
         // Load settings on initialization

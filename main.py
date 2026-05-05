@@ -42,6 +42,14 @@ from Modules.config import (
     ecohost_precision_last_mode_change, ecohost_precision_cooldown,
     ecohost_precision_empty_since, ECOHOST_LOG_BUFFER_SIZE
 )
+
+# Check for pywinauto availability
+PYWINAUTO_AVAILABLE = False
+try:
+    import pywinauto
+    PYWINAUTO_AVAILABLE = True
+except ImportError:
+    pywinauto = None
 from Modules.models import (
     ServerState, PlayerInfo, ServerStatus, Settings,
     server_status, app_settings, log_lines, log_lock,
@@ -54,6 +62,7 @@ from Modules.models import (
 from Modules.server_control import console_controller, is_minecraft_process_running
 from Modules.log_watcher import start_log_watcher, start_ping_listener, record_player_join, record_player_leave, update_ecohost_precision_mode
 from Modules.resource_monitor import get_system_resources
+from Modules.commands import get_server_tps
 from Modules.player_sessions import (
     player_sessions, server_uptime_stats, PlayerSession,
     format_duration, save_player_stats, load_player_stats,
@@ -236,6 +245,10 @@ async def lifespan(app: FastAPI):
     logger.info("[Auth] Authentication system initialized")
     
     load_settings_from_file()
+    
+    # Clear any stale player data from previous crashes
+    server_status.players.clear()
+    logger.info("[Startup] Cleared stale player data")
     
     app_settings.current_power_mode = get_current_power_mode()
     
@@ -826,16 +839,35 @@ async def get_status(current_user: User = require_auth()):
         elapsed = time.time() - empty_server_countdown
         countdown_remaining = max(0, app_settings.auto_shutdown_duration - int(elapsed))
 
-    # Calculate estimated average tick time based on system performance
-    avg_tick = 50.0  # Default 50ms (20 TPS)
+    # Get real server performance metrics
+    avg_tick = 50.0  # Default fallback
+    real_tps = None
+    
     if server_status.state == ServerState.ACTIVE:
-        # Estimate tick time based on CPU usage and player count
-        base_tick = 50.0  # 20 TPS = 50ms per tick
-        cpu_impact = cpu * 0.5  # CPU usage increases tick time
-        player_impact = len(server_status.players) * 2.0  # Each player adds ~2ms
-        avg_tick = base_tick + cpu_impact + player_impact
-        # Cap at reasonable values
-        avg_tick = max(20.0, min(200.0, avg_tick))
+        try:
+            # Try to get real TPS from server
+            import asyncio
+            real_tps = asyncio.run(get_server_tps())
+            if real_tps is not None:
+                # Calculate tick time from real TPS
+                avg_tick = 1000.0 / real_tps if real_tps > 0 else 50.0
+                logger.debug(f"[Status] Real TPS: {real_tps:.2f}, Avg tick: {avg_tick:.2f}ms")
+            else:
+                # Fallback to estimation if real TPS unavailable
+                base_tick = 50.0  # 20 TPS = 50ms per tick
+                cpu_impact = cpu * 0.5  # CPU usage increases tick time
+                player_impact = len(server_status.players) * 2.0  # Each player adds ~2ms
+                avg_tick = base_tick + cpu_impact + player_impact
+                avg_tick = max(20.0, min(200.0, avg_tick))
+                logger.debug(f"[Status] Estimated tick time: {avg_tick:.2f}ms (real TPS unavailable)")
+        except Exception as e:
+            logger.warning(f"[Status] Failed to get real TPS, using estimation: {e}")
+            # Fallback estimation
+            base_tick = 50.0
+            cpu_impact = cpu * 0.5
+            player_impact = len(server_status.players) * 2.0
+            avg_tick = base_tick + cpu_impact + player_impact
+            avg_tick = max(20.0, min(200.0, avg_tick))
 
     return StatusResponse(
         state=server_status.state,
@@ -1247,16 +1279,34 @@ async def websocket_endpoint(websocket: WebSocket):
             if countdown_active and empty_server_countdown:
                 countdown_remaining = max(0, app_settings.auto_shutdown_duration - (time.time() - empty_server_countdown))
 
-            # Calculate estimated average tick time based on system performance
-            avg_tick = 50.0  # Default 50ms (20 TPS)
+            # Get real server performance metrics
+            avg_tick = 50.0  # Default fallback
+            real_tps = None
+            
             if server_status.state == ServerState.ACTIVE:
-                # Estimate tick time based on CPU usage and player count
-                base_tick = 50.0  # 20 TPS = 50ms per tick
-                cpu_impact = cpu * 0.5  # CPU usage increases tick time
-                player_impact = len(server_status.players) * 2.0  # Each player adds ~2ms
-                avg_tick = base_tick + cpu_impact + player_impact
-                # Cap at reasonable values
-                avg_tick = max(20.0, min(200.0, avg_tick))
+                try:
+                    # Try to get real TPS from server
+                    real_tps = await get_server_tps()
+                    if real_tps is not None:
+                        # Calculate tick time from real TPS
+                        avg_tick = 1000.0 / real_tps if real_tps > 0 else 50.0
+                        logger.debug(f"[Status] Real TPS: {real_tps:.2f}, Avg tick: {avg_tick:.2f}ms")
+                    else:
+                        # Fallback to estimation if real TPS unavailable
+                        base_tick = 50.0  # 20 TPS = 50ms per tick
+                        cpu_impact = cpu * 0.5  # CPU usage increases tick time
+                        player_impact = len(server_status.players) * 2.0  # Each player adds ~2ms
+                        avg_tick = base_tick + cpu_impact + player_impact
+                        avg_tick = max(20.0, min(200.0, avg_tick))
+                        logger.debug(f"[Status] Estimated tick time: {avg_tick:.2f}ms (real TPS unavailable)")
+                except Exception as e:
+                    logger.warning(f"[Status] Failed to get real TPS, using estimation: {e}")
+                    # Fallback estimation
+                    base_tick = 50.0
+                    cpu_impact = cpu * 0.5
+                    player_impact = len(server_status.players) * 2.0
+                    avg_tick = base_tick + cpu_impact + player_impact
+                    avg_tick = max(20.0, min(200.0, avg_tick))
 
             data = {
                 "state": server_status.state.value,
@@ -1381,6 +1431,72 @@ async def get_resource_history(
             metrics=[],
             message=f"Failed to get history: {str(e)}"
         )
+
+
+# =============================================================================
+# Emergency Shutdown Endpoint
+# =============================================================================
+
+@app.post("/emergency-shutdown", response_model=dict)
+async def emergency_shutdown(
+    current_user: User = Depends(require_admin)
+):
+    """Emergency shutdown that kills the Minecraft server process immediately."""
+    try:
+        from Modules.models import server_status
+        from Modules.server_control import console_controller
+        
+        logger.warning(f"[EmergencyShutdown] User '{current_user.username}' initiated emergency shutdown")
+        
+        # Kill the Java process immediately
+        success = False
+        
+        if PYWINAUTO_AVAILABLE:
+            # Force kill the server console window
+            try:
+                import pywinauto
+                # Find and kill the server console window
+                for window in pywinauto.Desktop(backend="uia").windows():
+                    if CONSOLE_WINDOW_TITLE in window.window_text():
+                        logger.warning(f"[EmergencyShutdown] Killing console window: {window.window_text()}")
+                        window.close()
+                        success = True
+                        break
+            except Exception as e:
+                logger.error(f"[EmergencyShutdown] Failed to kill console window: {e}")
+        
+        # Also try to kill Java process directly
+        try:
+            import psutil
+            for proc in psutil.process_iter(['pid', 'name']):
+                if 'java' in proc.info['name'].lower():
+                    logger.warning(f"[EmergencyShutdown] Killing Java process: PID {proc.pid}")
+                    proc.kill()
+                    success = True
+                    break
+        except Exception as e:
+            logger.error(f"[EmergencyShutdown] Failed to kill Java process: {e}")
+        
+        # Update server status
+        if success:
+            server_status.state = ServerState.STOPPING
+            logger.info("[EmergencyShutdown] Emergency shutdown completed")
+            return {
+                "success": True,
+                "message": "Emergency shutdown completed - server process killed"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to kill server process"
+            }
+            
+    except Exception as e:
+        logger.error(f"[EmergencyShutdown] Emergency shutdown failed: {e}")
+        return {
+            "success": False,
+            "message": f"Emergency shutdown failed: {str(e)}"
+        }
 
 
 # =============================================================================
@@ -1556,6 +1672,49 @@ async def set_player_gamemode(
             data={},
             message=f"Failed to change gamemode: {str(e)}"
         )
+
+
+@app.delete("/players/{username}", response_model=dict)
+async def delete_player(
+    username: str,
+    current_user: User = Depends(require_admin)
+):
+    """Delete a player from EcoHost memory (removes from player stats and current online players)."""
+    try:
+        from Modules.models import server_status
+        from Modules.player_sessions import delete_player_stats
+        
+        # Remove from current online players if present
+        removed_from_online = False
+        original_players = list(server_status.players)  # Make a copy
+        server_status.players = [p for p in server_status.players if p.username != username]
+        if len(server_status.players) < len(original_players):
+            removed_from_online = True
+            logger.info(f"[PlayerManagement] Removed {username} from online players list")
+        
+        # Delete from player statistics
+        stats_deleted = delete_player_stats(username)
+        
+        if stats_deleted or removed_from_online:
+            logger.info(f"[PlayerManagement] User '{current_user.username}' deleted player '{username}' from memory")
+            return {
+                "success": True,
+                "message": f"Player '{username}' has been removed from EcoHost memory",
+                "removed_from_online": removed_from_online,
+                "stats_deleted": stats_deleted
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Player '{username}' not found in EcoHost memory"
+            }
+            
+    except Exception as e:
+        logger.error(f"[PlayerManagement] Failed to delete player '{username}': {e}")
+        return {
+            "success": False,
+            "message": f"Failed to delete player: {str(e)}"
+        }
 
 
 # =============================================================================
