@@ -66,18 +66,28 @@ class RCONClient:
         
         try:
             response = self.connection.command(command)
-            logger.info(f"[RCON] Command sent: {command}")
+            # Don't log TPS commands to reduce log spam
+            if command.lower() != "tps":
+                logger.info(f"[RCON] Command sent: {command}")
             if response:
-                logger.info(f"[RCON] Response length: {len(response)} bytes")
+                # Don't log response length for TPS commands to reduce log spam
+                if command.lower() != "tps":
+                    logger.info(f"[RCON] Response length: {len(response)} bytes")
                 if len(response) < 500:
-                    logger.debug(f"[RCON] Response: {response.strip()}")
+                    # Don't log debug responses for TPS commands
+                    if command.lower() != "tps":
+                        logger.debug(f"[RCON] Response: {response.strip()}")
                 else:
-                    logger.debug(f"[RCON] Response: {response[:200]}... (truncated)")
+                    # Don't log debug responses for TPS commands
+                    if command.lower() != "tps":
+                        logger.debug(f"[RCON] Response: {response[:200]}... (truncated)")
             else:
                 logger.warning(f"[RCON] Empty response received")
             return response
         except Exception as e:
-            logger.error(f"[RCON] Failed to send command '{command}': {e}")
+            # Don't log TPS command errors to reduce log spam
+            if command.lower() != "tps":
+                logger.error(f"[RCON] Failed to send command '{command}': {e}")
             # Try to reconnect on next command
             self.disconnect()
             return None

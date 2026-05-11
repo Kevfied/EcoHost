@@ -76,6 +76,11 @@ from Modules.player_data import (
     has_following_entity_data, is_offline_response,
     parse_live_player_data, PYWINAUTO_AVAILABLE
 )
+from Modules.backup_manager import (
+    create_backup, restore_backup, delete_backup, list_backups,
+    cleanup_old_backups, calculate_next_backup_time,
+    start_auto_backup_scheduler, stop_auto_backup_scheduler
+)
 
 import logging
 from logging.handlers import MemoryHandler
@@ -885,6 +890,10 @@ async def get_status(current_user: User = require_auth()):
         countdown_total=app_settings.auto_shutdown_duration,
         avg_tick=avg_tick,
         maintenance_mode=app_settings.maintenance_mode,
+        backup_in_progress=server_status.backup_in_progress,
+        backup_operation=server_status.backup_operation,
+        backup_progress=server_status.backup_progress,
+        backup_status_message=server_status.backup_status_message,
     )
 
 
@@ -904,6 +913,15 @@ async def start_server(request: Request, current_user: User = Depends(require_se
     """Start the Minecraft server in a visible CMD window."""
     
     global server_status
+    
+    # Check if backup/restore is in progress
+    if server_status.backup_in_progress:
+        operation = server_status.backup_operation or "backup/restore"
+        return PowerResponse(
+            success=False,
+            message=f"Cannot start server while {operation} is in progress. Please wait for the operation to complete.",
+            state=server_status.state
+        )
     
     # Check maintenance mode
     if app_settings.maintenance_mode:
@@ -1144,6 +1162,12 @@ async def get_settings(current_user: User = require_auth()):
         "rcon_password": app_settings.rcon_password,
         "maintenance_mode": app_settings.maintenance_mode,
         "maintenance_ips": app_settings.maintenance_ips,
+        "backup_enabled": app_settings.backup_enabled,
+        "backup_auto_enabled": app_settings.backup_auto_enabled,
+        "backup_duration_hours": app_settings.backup_duration_hours,
+        "backup_duration_days": app_settings.backup_duration_days,
+        "backup_max_count": app_settings.backup_max_count,
+        "backup_auto_delete_enabled": app_settings.backup_auto_delete_enabled,
         "ecohost_precision_status": {
             "enabled": app_settings.ecohost_precision_enabled,
             "player_count": player_count,
@@ -1326,6 +1350,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 "current_power_mode": app_settings.current_power_mode,
                 "avg_tick": avg_tick,
                 "maintenance_mode": app_settings.maintenance_mode,
+                "backup_in_progress": server_status.backup_in_progress,
+                "backup_operation": server_status.backup_operation,
+                "backup_progress": server_status.backup_progress,
+                "backup_status_message": server_status.backup_status_message,
             }
 
             await websocket.send_json(data)
@@ -1715,6 +1743,293 @@ async def delete_player(
             "success": False,
             "message": f"Failed to delete player: {str(e)}"
         }
+
+
+# =============================================================================
+# Backup Management Endpoints (Admin Only)
+# =============================================================================
+
+
+@app.get("/backups", response_model=dict)
+async def get_backups_list(current_user: User = Depends(require_admin)):
+    """List all available backups (admin only)."""
+    try:
+        result = list_backups()
+        logger.info(f"[Backup] Admin '{current_user.username}' listed backups: {result['count']} backups")
+        return result
+    except Exception as e:
+        logger.error(f"[Backup] Failed to list backups: {e}")
+        return {"success": False, "backups": [], "count": 0, "error": str(e)}
+
+
+@app.post("/backups/create", response_model=dict)
+async def create_manual_backup(current_user: User = Depends(require_admin)):
+    """Create a manual backup of the world folder (admin only)."""
+    try:
+        # Check if server is running
+        if server_status.state != ServerState.IDLE:
+            return {
+                "success": False,
+                "error": "Cannot create backup while server is running. Please stop the server first."
+            }
+        
+        # Check if backup is already in progress
+        if server_status.backup_in_progress:
+            return {
+                "success": False,
+                "error": "A backup or restore operation is already in progress."
+            }
+        
+        logger.info(f"[Backup] Admin '{current_user.username}' creating manual backup")
+        
+        # Set backup state
+        server_status.backup_in_progress = True
+        server_status.backup_operation = "backup"
+        server_status.backup_progress = 0.0
+        server_status.backup_status_message = "Initializing backup..."
+        
+        # Define progress callback
+        def progress_callback(progress: float, message: str):
+            server_status.backup_progress = progress
+            server_status.backup_status_message = message
+            logger.info(f"[Backup] Progress: {progress * 100:.1f}% - {message}")
+        
+        # Run backup in a thread to avoid blocking
+        def run_backup():
+            try:
+                result = create_backup("Manual backup", progress_callback)
+                
+                if result["success"]:
+                    # Cleanup old backups if auto-delete is enabled
+                    if app_settings.backup_auto_delete_enabled:
+                        cleanup_result = cleanup_old_backups(app_settings.backup_max_count)
+                        if cleanup_result["deleted_count"] > 0:
+                            logger.info(f"[Backup] Auto-cleanup removed {cleanup_result['deleted_count']} old backups")
+                
+                # Reset backup state
+                server_status.backup_in_progress = False
+                server_status.backup_operation = None
+                server_status.backup_progress = 0.0
+                server_status.backup_status_message = ""
+                
+                logger.info(f"[Backup] Backup operation finished: {result.get('backup_id', 'unknown')}")
+                
+                return result
+            except Exception as e:
+                logger.error(f"[Backup] Failed to create manual backup: {e}")
+                server_status.backup_in_progress = False
+                server_status.backup_operation = None
+                server_status.backup_progress = 0.0
+                server_status.backup_status_message = ""
+                
+                return {"success": False, "error": str(e)}
+        
+        # Start backup thread
+        import threading
+        backup_thread = threading.Thread(target=run_backup, daemon=True)
+        backup_thread.start()
+        
+        return {
+            "success": True,
+            "message": "Backup started in background",
+            "backup_in_progress": True
+        }
+        
+    except Exception as e:
+        logger.error(f"[Backup] Failed to create manual backup: {e}")
+        server_status.backup_in_progress = False
+        server_status.backup_operation = None
+        server_status.backup_progress = 0.0
+        server_status.backup_status_message = ""
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/backups/restore/{backup_id}", response_model=dict)
+async def restore_from_backup(backup_id: str, current_user: User = Depends(require_admin)):
+    """Restore world folder from selected backup (admin only)."""
+    try:
+        # Check if server is running
+        if server_status.state != ServerState.IDLE:
+            return {
+                "success": False,
+                "error": "Cannot restore backup while server is running. Please stop the server first."
+            }
+        
+        # Check if backup is already in progress
+        if server_status.backup_in_progress:
+            return {
+                "success": False,
+                "error": "A backup or restore operation is already in progress."
+            }
+        
+        logger.info(f"[Backup] Admin '{current_user.username}' restoring from backup: {backup_id}")
+        
+        # Set backup state
+        server_status.backup_in_progress = True
+        server_status.backup_operation = "restore"
+        server_status.backup_progress = 0.0
+        server_status.backup_status_message = "Initializing restore..."
+        
+        # Define progress callback
+        def progress_callback(progress: float, message: str):
+            server_status.backup_progress = progress
+            server_status.backup_status_message = message
+            logger.info(f"[Backup] Progress: {progress * 100:.1f}% - {message}")
+        
+        # Run restore in a thread to avoid blocking
+        def run_restore():
+            try:
+                result = restore_backup(backup_id, progress_callback)
+                
+                # Reset backup state
+                server_status.backup_in_progress = False
+                server_status.backup_operation = None
+                server_status.backup_progress = 0.0
+                server_status.backup_status_message = ""
+                
+                logger.info(f"[Backup] Restore operation finished: {backup_id}")
+                
+                return result
+            except Exception as e:
+                logger.error(f"[Backup] Failed to restore backup: {e}")
+                server_status.backup_in_progress = False
+                server_status.backup_operation = None
+                server_status.backup_progress = 0.0
+                server_status.backup_status_message = ""
+                
+                return {"success": False, "error": str(e)}
+        
+        # Start restore thread
+        import threading
+        restore_thread = threading.Thread(target=run_restore, daemon=True)
+        restore_thread.start()
+        
+        return {
+            "success": True,
+            "message": "Restore started in background",
+            "backup_in_progress": True
+        }
+        
+    except Exception as e:
+        logger.error(f"[Backup] Failed to restore backup: {e}")
+        server_status.backup_in_progress = False
+        server_status.backup_operation = None
+        server_status.backup_progress = 0.0
+        server_status.backup_status_message = ""
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/backups/{backup_id}", response_model=dict)
+async def delete_backup_endpoint(backup_id: str, current_user: User = Depends(require_admin)):
+    """Delete a specific backup (admin only)."""
+    try:
+        logger.info(f"[Backup] Admin '{current_user.username}' deleting backup: {backup_id}")
+        result = delete_backup(backup_id)
+        return result
+    except Exception as e:
+        logger.error(f"[Backup] Failed to delete backup: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/backups/settings", response_model=dict)
+async def get_backup_settings_endpoint(current_user: User = Depends(require_admin)):
+    """Get backup configuration (admin only)."""
+    try:
+        return {
+            "success": True,
+            "backup_enabled": app_settings.backup_enabled,
+            "backup_auto_enabled": app_settings.backup_auto_enabled,
+            "backup_duration_hours": app_settings.backup_duration_hours,
+            "backup_duration_days": app_settings.backup_duration_days,
+            "backup_max_count": app_settings.backup_max_count,
+            "backup_auto_delete_enabled": app_settings.backup_auto_delete_enabled,
+            "backup_last_run": app_settings.backup_last_run,
+            "next_backup": calculate_next_backup_time(
+                app_settings.backup_duration_hours,
+                app_settings.backup_duration_days,
+                app_settings.backup_last_run
+            )
+        }
+    except Exception as e:
+        logger.error(f"[Backup] Failed to get backup settings: {e}")
+        return {"success": False, "error": str(e)}
+
+
+class BackupSettingsUpdate(BaseModel):
+    backup_enabled: Optional[bool] = None
+    backup_auto_enabled: Optional[bool] = None
+    backup_duration_hours: Optional[int] = None
+    backup_duration_days: Optional[int] = None
+    backup_max_count: Optional[int] = None
+    backup_auto_delete_enabled: Optional[bool] = None
+
+
+@app.put("/backups/settings", response_model=dict)
+async def update_backup_settings_endpoint(
+    settings: BackupSettingsUpdate,
+    current_user: User = Depends(require_admin)
+):
+    """Update backup configuration (admin only)."""
+    try:
+        global app_settings
+        
+        if settings.backup_enabled is not None:
+            app_settings.backup_enabled = settings.backup_enabled
+            logger.info(f"[Backup] Admin '{current_user.username}' set backup_enabled to {settings.backup_enabled}")
+        
+        if settings.backup_auto_enabled is not None:
+            app_settings.backup_auto_enabled = settings.backup_auto_enabled
+            logger.info(f"[Backup] Admin '{current_user.username}' set backup_auto_enabled to {settings.backup_auto_enabled}")
+            
+            # Start or stop scheduler based on setting
+            if settings.backup_auto_enabled:
+                backup_settings_dict = {
+                    "backup_auto_enabled": True,
+                    "backup_duration_hours": app_settings.backup_duration_hours,
+                    "backup_duration_days": app_settings.backup_duration_days,
+                    "backup_last_run": app_settings.backup_last_run,
+                    "backup_auto_delete_enabled": app_settings.backup_auto_delete_enabled,
+                    "backup_max_count": app_settings.backup_max_count
+                }
+                start_auto_backup_scheduler(backup_settings_dict)
+            else:
+                stop_auto_backup_scheduler()
+        
+        if settings.backup_duration_hours is not None:
+            if settings.backup_duration_hours < 0 or settings.backup_duration_hours > 8760:
+                return {"success": False, "error": "Hours must be between 0 and 8760"}
+            app_settings.backup_duration_hours = settings.backup_duration_hours
+            logger.info(f"[Backup] Admin '{current_user.username}' set backup_duration_hours to {settings.backup_duration_hours}")
+        
+        if settings.backup_duration_days is not None:
+            if settings.backup_duration_days < 0 or settings.backup_duration_days > 365:
+                return {"success": False, "error": "Days must be between 0 and 365"}
+            app_settings.backup_duration_days = settings.backup_duration_days
+            logger.info(f"[Backup] Admin '{current_user.username}' set backup_duration_days to {settings.backup_duration_days}")
+        
+        # Validate that at least one of hours or days is set to a positive value
+        total_hours = app_settings.backup_duration_hours + (app_settings.backup_duration_days * 24)
+        if total_hours < 1:
+            return {"success": False, "error": "Either hours or days must be set to at least 1"}
+        
+        if settings.backup_max_count is not None:
+            if settings.backup_max_count < 3 or settings.backup_max_count > 100:
+                return {"success": False, "error": "Max backups must be between 3 and 100"}
+            app_settings.backup_max_count = settings.backup_max_count
+            logger.info(f"[Backup] Admin '{current_user.username}' set backup_max_count to {settings.backup_max_count}")
+        
+        if settings.backup_auto_delete_enabled is not None:
+            app_settings.backup_auto_delete_enabled = settings.backup_auto_delete_enabled
+            logger.info(f"[Backup] Admin '{current_user.username}' set backup_auto_delete_enabled to {settings.backup_auto_delete_enabled}")
+        
+        # Save settings to file
+        save_settings_to_file()
+        
+        return {"success": True, "message": "Backup settings updated"}
+        
+    except Exception as e:
+        logger.error(f"[Backup] Failed to update backup settings: {e}")
+        return {"success": False, "error": str(e)}
 
 
 # =============================================================================

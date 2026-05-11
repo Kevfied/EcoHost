@@ -227,6 +227,46 @@ def record_player_leave(username: str):
     save_player_stats()
 
 
+def delete_player_stats(username: str) -> bool:
+    """Delete a player's statistics from memory and storage."""
+    global player_sessions
+    
+    # Remove from memory
+    if username in player_sessions:
+        del player_sessions[username]
+        logger.info(f"[PlayerStats] Deleted {username} from memory")
+    
+    # Load current stats from file
+    try:
+        if PLAYER_STATS_FILE.exists():
+            with open(PLAYER_STATS_FILE, 'r', encoding='utf-8') as f:
+                stats_data = json.load(f)
+        else:
+            stats_data = {}
+    except Exception as e:
+        logger.error(f"[PlayerStats] Failed to load stats for deletion: {e}")
+        stats_data = {}
+    
+    # Remove from file data
+    deleted = False
+    if username in stats_data:
+        del stats_data[username]
+        deleted = True
+        logger.info(f"[PlayerStats] Deleted {username} from storage")
+    
+    # Save updated stats
+    if deleted:
+        try:
+            with open(PLAYER_STATS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(stats_data, f, indent=2, default=str)
+            logger.info(f"[PlayerStats] Saved updated stats after deleting {username}")
+        except Exception as e:
+            logger.error(f"[PlayerStats] Failed to save stats after deletion: {e}")
+            return False
+    
+    return deleted
+
+
 def periodic_save():
     """Save stats periodically every 5 minutes."""
     while True:

@@ -115,6 +115,10 @@ class ServerStatus:
     ram_usage: float = 0.0
     uptime: float = 0.0
     last_player_time: float = field(default_factory=time.time)
+    backup_in_progress: bool = False
+    backup_operation: Optional[str] = None  # "backup" or "restore"
+    backup_progress: float = 0.0  # 0.0 to 1.0
+    backup_status_message: str = ""
     
     @property
     def state(self) -> ServerState:
@@ -147,6 +151,15 @@ class Settings:
     # Maintenance Mode Settings
     maintenance_mode: bool = False
     maintenance_ips: list[str] = field(default_factory=list)  # IPs allowed during maintenance
+    
+    # Backup Settings
+    backup_enabled: bool = True
+    backup_auto_enabled: bool = False
+    backup_duration_hours: int = 24
+    backup_duration_days: int = 0
+    backup_max_count: int = 10
+    backup_auto_delete_enabled: bool = True
+    backup_last_run: Optional[float] = None
 
 
 # =============================================================================
@@ -198,6 +211,12 @@ def load_settings_from_file() -> None:
                 logger.info(f"[Settings] Power Mode Scheduling: {app_settings.power_mode_scheduling_enabled}")
                 logger.info(f"[Settings] Auto Shutdown: {app_settings.auto_shutdown_enabled}")
                 logger.info(f"[Settings] Auto Shutdown Duration: {app_settings.auto_shutdown_duration}")
+                logger.info(f"[Settings] Backup Enabled: {app_settings.backup_enabled}")
+                logger.info(f"[Settings] Backup Auto Enabled: {app_settings.backup_auto_enabled}")
+                logger.info(f"[Settings] Backup Duration Hours: {app_settings.backup_duration_hours}")
+                logger.info(f"[Settings] Backup Duration Days: {app_settings.backup_duration_days}")
+                logger.info(f"[Settings] Backup Max Count: {app_settings.backup_max_count}")
+                logger.info(f"[Settings] Backup Auto Delete: {app_settings.backup_auto_delete_enabled}")
         else:
             logger.warning(f"[Settings] No config file found at {CONFIG_FILE}, using defaults")
     except Exception as e:
@@ -244,6 +263,10 @@ class StatusResponse(BaseModel):
     countdown_total: int = 0  # Total countdown duration in seconds
     avg_tick: float = 0.0  # Average tick time in milliseconds
     maintenance_mode: bool = False  # Whether maintenance mode is enabled
+    backup_in_progress: bool = False  # Whether backup/restore is in progress
+    backup_operation: Optional[str] = None  # "backup" or "restore"
+    backup_progress: float = 0.0  # 0.0 to 1.0
+    backup_status_message: str = ""
 
 
 class LogsResponse(BaseModel):
@@ -271,6 +294,14 @@ class SettingsResponse(BaseModel):
     rcon_enabled: bool
     rcon_port: int
     rcon_password: str
+    maintenance_mode: bool
+    maintenance_ips: list[str]
+    backup_enabled: bool
+    backup_auto_enabled: bool
+    backup_duration_hours: int
+    backup_duration_days: int
+    backup_max_count: int
+    backup_auto_delete_enabled: bool
 
 
 class MetricsHistoryResponse(BaseModel):

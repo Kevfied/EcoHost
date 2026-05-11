@@ -12,6 +12,69 @@ from .models import ServerState, server_status
 logger = logging.getLogger(__name__)
 
 
+async def get_server_tps() -> Optional[float]:
+    """
+    Get real server TPS from Minecraft server using RCON.
+    
+    Returns:
+        TPS value (ticks per second) or None if unavailable
+    """
+    if server_status.state != ServerState.ACTIVE:
+        return None
+    
+    try:
+        if is_rcon_available():
+            # Try to get TPS using the /tps command (available in most server types)
+            response = send_rcon_command("tps")
+            if response:
+                # Parse TPS from response (format varies by server type)
+                return parse_tps_response(response)
+        else:
+            # Fallback: try to get performance data from debug command
+            response = send_rcon_command("debug report")
+            if response and "TPS" in response:
+                return parse_tps_response(response)
+    except Exception as e:
+        # Don't log TPS command failures to reduce log spam
+        pass
+    
+    return None
+
+
+def parse_tps_response(response: str) -> Optional[float]:
+    """
+    Parse TPS value from server response.
+    
+    Args:
+        response: Server response containing TPS information
+        
+    Returns:
+        TPS value or None if parsing failed
+    """
+    try:
+        # Common patterns for TPS in different server types
+        patterns = [
+            r'TPS:\s*([\d.]+)',  # Standard format: "TPS: 19.8"
+            r'tps:\s*([\d.]+)',  # Lowercase
+            r'(\d+\.\d+)\s*tps',  # "19.8 tps"
+            r'Mean tick rate:\s*([\d.]+)',  # PaperMC format
+            r'(\d+\.\d+)\s*ticks per second',  # Verbose format
+        ]
+        
+        import re
+        for pattern in patterns:
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                tps = float(match.group(1))
+                # Validate TPS range (0-20 is typical for Minecraft)
+                if 0 <= tps <= 30:  # Allow some margin for overclocked servers
+                    return tps
+        
+        return None
+    except Exception as e:
+        return None
+
+
 async def execute_command(command: str) -> bool:
     """
     Execute a Minecraft server command using the best available method.

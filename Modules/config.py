@@ -54,3 +54,15 @@ ecohost_precision_empty_since: Optional[float] = None  # Timestamp when server b
 
 # Log buffer
 ECOHOST_LOG_BUFFER_SIZE = 200
+
+# =============================================================================
+# Backup Settings
+# =============================================================================
+
+BACKUP_ENABLED = True
+BACKUP_AUTO_ENABLED = False
+BACKUP_DURATION_HOURS = 24
+BACKUP_DURATION_DAYS = 0
+BACKUP_MAX_COUNT = 10
+BACKUP_AUTO_DELETE_ENABLED = True
+BACKUP_LAST_RUN = None

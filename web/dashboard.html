@@ -265,6 +265,13 @@
                 <span class="font-medium">Console</span>
             </div>
 
+            <div class="sidebar-item p-3 rounded-lg cursor-pointer flex items-center gap-3 admin-only hidden" data-page="protection">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                </svg>
+                <span class="font-medium">Protection</span>
+            </div>
+
             <div class="sidebar-item p-3 rounded-lg cursor-pointer flex items-center gap-3" data-page="settings">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -380,6 +387,28 @@
                 </div>
             </div>
 
+            <!-- Backup/Restore Status Notification -->
+            <div id="dashboard-backup-notice" class="hidden mb-6 p-4 bg-yellow-900/30 border border-yellow-500/30 rounded-xl">
+                <div class="flex items-center gap-3">
+                    <svg class="w-5 h-5 text-yellow-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                    </svg>
+                    <div class="flex-1">
+                        <h3 id="dashboard-backup-notice-title" class="text-sm font-semibold text-yellow-300">Backup in Progress</h3>
+                        <p id="dashboard-backup-notice-message" class="text-xs text-yellow-400 mt-1">Server is backing up...</p>
+                        <div class="mt-2">
+                            <div class="w-full bg-yellow-900/50 rounded-full h-2 overflow-hidden">
+                                <div id="dashboard-backup-progress-bar" class="h-full bg-yellow-500 transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                            <p id="dashboard-backup-progress-text" class="text-xs text-yellow-400 mt-1">0%</p>
+                        </div>
+                    </div>
+                    <div id="dashboard-backup-toggle-indicator" class="px-3 py-1 bg-yellow-800/50 rounded-full">
+                        <span id="dashboard-backup-indicator-text" class="text-xs font-medium text-yellow-300">BACKUP</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- System Resources -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <div class="glass-card rounded-2xl p-6">
@@ -460,7 +489,7 @@
             </div>
 
             <!-- Danger Zone - Admin Only -->
-            <div id="danger-zone" class="mt-6 mb-6 ${currentUserRole === 'admin' ? '' : 'hidden'}">
+            <div id="danger-zone" class="mt-6 mb-6 hidden">
                 <div class="p-4 bg-red-900/20 border border-red-500/30 rounded-xl">
                     <div class="flex items-center gap-2 mb-4">
                         <svg class="w-5 h-5 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1067,6 +1096,198 @@
                 </div>
             </div>
         </div>
+
+        <!-- Protection Page (Admin Only) -->
+        <div id="page-protection" class="page">
+            <div class="mb-6">
+                <h2 class="text-3xl font-bold text-white mb-2">World Protection</h2>
+                <p class="text-slate-400">Backup and restore your Minecraft world</p>
+            </div>
+
+            <!-- Backup/Restore Status Notification -->
+            <div id="protection-backup-notice" class="hidden mb-6 p-4 bg-yellow-900/30 border border-yellow-500/30 rounded-xl">
+                <div class="flex items-center gap-3">
+                    <svg class="w-5 h-5 text-yellow-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                    </svg>
+                    <div class="flex-1">
+                        <h3 id="protection-backup-notice-title" class="text-sm font-semibold text-yellow-300">Backup in Progress</h3>
+                        <p id="protection-backup-notice-message" class="text-xs text-yellow-400 mt-1">Server is backing up...</p>
+                        <div class="mt-2">
+                            <div class="w-full bg-yellow-900/50 rounded-full h-2 overflow-hidden">
+                                <div id="protection-backup-progress-bar" class="h-full bg-yellow-500 transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                            <p id="protection-backup-progress-text" class="text-xs text-yellow-400 mt-1">0%</p>
+                        </div>
+                    </div>
+                    <div id="protection-backup-toggle-indicator" class="px-3 py-1 bg-yellow-800/50 rounded-full">
+                        <span id="protection-backup-indicator-text" class="text-xs font-medium text-yellow-300">BACKUP</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <!-- Manual Backup Card -->
+                <div class="glass-card rounded-2xl p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center">
+                            <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold text-white">Manual Backup</h3>
+                            <p class="text-sm text-slate-400">Create immediate backup</p>
+                        </div>
+                    </div>
+                    <button id="manual-backup-btn" class="w-full bg-green-500 hover:bg-green-600 text-white px-4 py-3 rounded-lg font-medium transition-colors">
+                        Create Backup Now
+                    </button>
+                </div>
+
+                <!-- Auto Backup Status Card -->
+                <div class="glass-card rounded-2xl p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                            <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold text-white">Auto Backup</h3>
+                            <p class="text-sm text-slate-400">Scheduled backups</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-slate-300">Status:</span>
+                        <span id="auto-backup-status" class="text-sm font-medium text-slate-400">Disabled</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-slate-300">Next backup:</span>
+                        <span id="next-backup-time" class="text-sm font-medium text-slate-400">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Backup Settings -->
+            <div class="glass-card rounded-2xl p-6 mb-6">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-semibold text-slate-300">Backup Settings</h3>
+                    <span id="backup-settings-status" class="text-sm text-green-400 hidden">Saved!</span>
+                </div>
+
+                <div class="space-y-6">
+                    <!-- Auto Backup Toggle -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">Automatic Backups</h3>
+                            <p class="text-xs text-slate-400 mt-1">Create backups automatically on schedule</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="auto-backup-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- Backup Duration -->
+                    <div class="p-4 bg-slate-800/50 rounded-xl">
+                        <h3 class="text-sm font-medium text-white mb-4">Backup Interval</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-xs text-slate-400 block mb-2">Hours</label>
+                                <input type="number" id="backup-hours" min="0" max="8760" value="24" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs text-slate-400 block mb-2">Days</label>
+                                <input type="number" id="backup-days" min="0" max="365" value="0" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-2">Total interval: <span id="total-backup-interval">24 hours</span></p>
+                    </div>
+
+                    <!-- Auto Delete Toggle -->
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                        <div>
+                            <h3 class="text-sm font-medium text-white">Auto Delete Old Backups</h3>
+                            <p class="text-xs text-slate-400 mt-1">Automatically remove oldest backups</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="auto-delete-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- Max Backups Count -->
+                    <div class="p-4 bg-slate-800/50 rounded-xl">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-medium text-white">Maximum Backups</h3>
+                            <span id="max-backups-value" class="text-sm text-blue-400">10</span>
+                        </div>
+                        <input type="range" id="max-backups-slider" min="3" max="50" value="10" class="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                        <div class="flex justify-between text-xs text-slate-500 mt-2">
+                            <span>3</span>
+                            <span>50</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Backup History & Restore -->
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">Backup History</h3>
+                    <button id="refresh-backups-btn" class="text-sm text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+
+                <!-- Backup List -->
+                <div id="backup-list" class="space-y-3">
+                    <div class="text-center py-8 text-slate-500">
+                        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        <p>Loading backups...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Restore Confirmation Modal -->
+        <div id="restore-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50">
+            <div class="glass-card rounded-2xl p-6 w-full max-w-md mx-4">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-bold text-white">Confirm Restore</h3>
+                        <p class="text-sm text-orange-400">This action cannot be undone</p>
+                    </div>
+                </div>
+
+                <div class="bg-slate-800/50 rounded-xl p-4 mb-4">
+                    <p class="text-sm text-slate-400">You are about to restore the world from:</p>
+                    <p id="restore-backup-name" class="text-white font-medium mt-1">backup_2024-05-11_14-30-15</p>
+                    <p class="text-xs text-slate-500 mt-2">This will replace the current world folder. The server will be stopped during the restore process.</p>
+                </div>
+
+                <div class="flex gap-3">
+                    <button id="cancel-restore" class="flex-1 py-2 px-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors">
+                        Cancel
+                    </button>
+                    <button id="confirm-restore" class="flex-1 py-2 px-4 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors">
+                        Restore World
+                    </button>
+                </div>
+            </div>
+        </div>
     </main>
 
     <!-- Add User Modal -->
@@ -1241,6 +1462,14 @@
                 if (consoleNav) consoleNav.style.display = 'none';
             }
 
+            // Show Emergency Shutdown only for admins
+            const dangerZone = document.getElementById('danger-zone');
+            if (currentUserRole === 'admin') {
+                dangerZone.classList.remove('hidden');
+            } else {
+                dangerZone.classList.add('hidden');
+            }
+
             // Hide server logs section on dashboard for users without view_server_logs permission
             if (!hasPermission('view_server_logs')) {
                 // Find the Server Logs card on dashboard (it's a glass-card containing "Server Logs" h3)
@@ -1254,6 +1483,12 @@
                         }
                     });
                 }
+            }
+
+            // Show Protection tab for admins only
+            if (isAdmin()) {
+                const protectionNav = document.querySelector('[data-page="protection"]');
+                if (protectionNav) protectionNav.classList.remove('hidden');
             }
 
             // Hide Players and Resources sidebar items for viewers (only Dashboard allowed)
@@ -1460,10 +1695,14 @@
             const needsStop = state === 'ACTIVE' || state === 'STARTING';
 
             const noPermission = (needsStart && !canStart) || (needsStop && !canStop);
-            powerBtn.disabled = state === 'STARTING' || state === 'STOPPING' || noPermission;
+            const backupInProgress = data.backup_in_progress;
+            
+            powerBtn.disabled = state === 'STARTING' || state === 'STOPPING' || noPermission || backupInProgress;
             powerBtn.style.opacity = powerBtn.disabled ? '0.6' : '1';
 
-            if (noPermission) {
+            if (backupInProgress) {
+                powerBtn.title = data.backup_operation === 'restore' ? 'Cannot start during restore' : 'Cannot start during backup';
+            } else if (noPermission) {
                 powerBtn.title = needsStop ? 'Moderator access required to stop' : 'Access denied';
             } else {
                 powerBtn.title = '';
@@ -1553,6 +1792,72 @@
                     (data.current_power_mode === 'ultimate_performance' ? 'text-purple-400' : 
                      data.current_power_mode === 'high_performance' ? 'text-green-400' : 
                      data.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
+            }
+
+            // Update backup/restore status bar
+            // Update dashboard notice
+            const dashboardBackupNotice = document.getElementById('dashboard-backup-notice');
+            const dashboardBackupTitle = document.getElementById('dashboard-backup-notice-title');
+            const dashboardBackupMessage = document.getElementById('dashboard-backup-notice-message');
+            const dashboardBackupProgressBar = document.getElementById('dashboard-backup-progress-bar');
+            const dashboardBackupProgressText = document.getElementById('dashboard-backup-progress-text');
+            const dashboardBackupIndicatorText = document.getElementById('dashboard-backup-indicator-text');
+            
+            // Update protection tab notice
+            const protectionBackupNotice = document.getElementById('protection-backup-notice');
+            const protectionBackupTitle = document.getElementById('protection-backup-notice-title');
+            const protectionBackupMessage = document.getElementById('protection-backup-notice-message');
+            const protectionBackupProgressBar = document.getElementById('protection-backup-progress-bar');
+            const protectionBackupProgressText = document.getElementById('protection-backup-progress-text');
+            const protectionBackupIndicatorText = document.getElementById('protection-backup-indicator-text');
+            
+            if (data.backup_in_progress) {
+                // Update dashboard notice
+                if (dashboardBackupNotice) {
+                    dashboardBackupNotice.classList.remove('hidden');
+                    if (dashboardBackupTitle && dashboardBackupMessage && dashboardBackupIndicatorText) {
+                        if (data.backup_operation === 'restore') {
+                            dashboardBackupTitle.textContent = 'Restore in Progress';
+                            dashboardBackupMessage.textContent = data.backup_status_message || 'Server is restoring...';
+                            dashboardBackupIndicatorText.textContent = 'RESTORE';
+                        } else {
+                            dashboardBackupTitle.textContent = 'Backup in Progress';
+                            dashboardBackupMessage.textContent = data.backup_status_message || 'Server is backing up...';
+                            dashboardBackupIndicatorText.textContent = 'BACKUP';
+                        }
+                    }
+                    if (dashboardBackupProgressBar && dashboardBackupProgressText) {
+                        const progressPercent = Math.round(data.backup_progress * 100);
+                        dashboardBackupProgressBar.style.width = `${progressPercent}%`;
+                        dashboardBackupProgressText.textContent = `${progressPercent}%`;
+                    }
+                }
+                
+                // Update protection tab notice
+                if (protectionBackupNotice) {
+                    protectionBackupNotice.classList.remove('hidden');
+                    if (protectionBackupTitle && protectionBackupMessage && protectionBackupIndicatorText) {
+                        if (data.backup_operation === 'restore') {
+                            protectionBackupTitle.textContent = 'Restore in Progress';
+                            protectionBackupMessage.textContent = data.backup_status_message || 'Server is restoring...';
+                            protectionBackupIndicatorText.textContent = 'RESTORE';
+                        } else {
+                            protectionBackupTitle.textContent = 'Backup in Progress';
+                            protectionBackupMessage.textContent = data.backup_status_message || 'Server is backing up...';
+                            protectionBackupIndicatorText.textContent = 'BACKUP';
+                        }
+                    }
+                    if (protectionBackupProgressBar && protectionBackupProgressText) {
+                        const progressPercent = Math.round(data.backup_progress * 100);
+                        protectionBackupProgressBar.style.width = `${progressPercent}%`;
+                        protectionBackupProgressText.textContent = `${progressPercent}%`;
+                    }
+                }
+                
+                            } else {
+                // Hide both notices
+                if (dashboardBackupNotice) dashboardBackupNotice.classList.add('hidden');
+                if (protectionBackupNotice) protectionBackupNotice.classList.add('hidden');
             }
         }
 
@@ -3396,30 +3701,17 @@
 
         // Update maintenance status display
         function updateMaintenanceStatus(isMaintenance) {
-            console.log('updateMaintenanceStatus called with:', isMaintenance);
-            console.log('maintenanceStatus element:', maintenanceStatus);
-            console.log('dashboardMaintenanceNotice element:', dashboardMaintenanceNotice);
-            console.log('currentUserRole:', currentUserRole);
             
-            // Update settings page maintenance status
-            if (isMaintenance) {
-                maintenanceStatus.classList.remove('hidden');
-            } else {
-                maintenanceStatus.classList.add('hidden');
-            }
+            // Load maintenance mode settings
+            maintenanceModeToggle.checked = data.maintenance_mode || false;
+            maintenanceIps.value = (data.maintenance_ips || []).join('\n');
             
-            // Update dashboard maintenance notice (visible to all users)
-            if (isMaintenance) {
-                dashboardMaintenanceNotice.classList.remove('hidden');
-            } else {
-                dashboardMaintenanceNotice.classList.add('hidden');
-            }
-            
-            // Update start button state by calling updateUI with current data
-            // We need to simulate the data structure that updateUI expects
-            const currentData = {
-                state: currentState,
-                maintenance_mode: isMaintenance
+            // Update current power mode text and color
+            const modeMap = {
+                'ultimate_performance': 'Ultimate Performance',
+                'high_performance': 'High Performance',
+                'power_saver': 'Power Saver',
+                'balanced': 'Balanced'
             };
             updateUI(currentData);
         }
@@ -3560,6 +3852,369 @@
                 }
             });
         }
+
+        // =============================================================================
+        // Backup Management Functions (Admin Only)
+        // =============================================================================
+
+        // Backup settings variables
+        let backupSettings = {
+            backup_enabled: true,
+            backup_auto_enabled: false,
+            backup_duration_hours: 24,
+            backup_duration_days: 0,
+            backup_max_count: 10,
+            backup_auto_delete_enabled: true,
+            backup_last_run: null,
+            next_backup: null
+        };
+
+        // Fetch and display backups
+        async function fetchBackups() {
+            if (!isAdmin()) return;
+            
+            try {
+                const response = await fetch('/backups', {
+                    credentials: 'same-origin'
+                });
+                
+                if (!response.ok) throw new Error('Failed to fetch backups');
+                
+                const data = await response.json();
+                renderBackupList(data.backups);
+            } catch (e) {
+                console.error('Failed to fetch backups:', e);
+                document.getElementById('backup-list').innerHTML = `
+                    <div class="text-center py-8 text-slate-500">
+                        <p>Failed to load backups</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Render backup list
+        function renderBackupList(backups) {
+            const container = document.getElementById('backup-list');
+            
+            if (!backups || backups.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-8 text-slate-500">
+                        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        <p>No backups available</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = backups.map(backup => {
+                const date = new Date(backup.timestamp * 1000);
+                const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                
+                return `
+                    <div class="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl hover:bg-slate-700/50 transition-colors">
+                        <div class="flex items-center gap-4">
+                            <div class="w-10 h-10 rounded-lg bg-slate-700 flex items-center justify-center">
+                                <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-medium text-white">${backup.id}</h4>
+                                <div class="flex items-center gap-3 mt-1">
+                                    <span class="text-xs text-slate-400">${backup.world_size}</span>
+                                    <span class="text-xs text-slate-500">•</span>
+                                    <span class="text-xs text-slate-400">${formattedDate}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button class="restore-btn p-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 transition-colors" data-backup-id="${backup.id}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                </svg>
+                            </button>
+                            <button class="delete-backup-btn p-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 transition-colors" data-backup-id="${backup.id}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Add event listeners for restore and delete buttons
+            document.querySelectorAll('.restore-btn').forEach(btn => {
+                btn.addEventListener('click', () => openRestoreModal(btn.dataset.backupId));
+            });
+
+            document.querySelectorAll('.delete-backup-btn').forEach(btn => {
+                btn.addEventListener('click', () => deleteBackup(btn.dataset.backupId));
+            });
+        }
+
+        // Create manual backup
+        async function createManualBackup() {
+            if (!isAdmin()) return;
+            
+            const btn = document.getElementById('manual-backup-btn');
+            btn.disabled = true;
+            btn.textContent = 'Creating backup...';
+            
+            try {
+                const response = await fetch('/backups/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(`Backup started in background...`, 'success');
+                    await fetchBackups();
+                    await fetchBackupSettings();
+                } else {
+                    showNotification(`Backup failed: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                console.error('Failed to create backup:', e);
+                showNotification('Failed to create backup - network error', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Create Backup Now';
+            }
+        }
+
+        // Delete backup
+        async function deleteBackup(backupId) {
+            if (!isAdmin()) return;
+            
+            if (!confirm(`Are you sure you want to delete backup "${backupId}"?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/backups/${backupId}`, {
+                    method: 'DELETE',
+                    credentials: 'same-origin'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(`Backup deleted: ${backupId}`, 'success');
+                    await fetchBackups();
+                } else {
+                    showNotification(`Failed to delete backup: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                console.error('Failed to delete backup:', e);
+                showNotification('Failed to delete backup - network error', 'error');
+            }
+        }
+
+        // Open restore modal
+        function openRestoreModal(backupId) {
+            if (!isAdmin()) return;
+            
+            const modal = document.getElementById('restore-modal');
+            document.getElementById('restore-backup-name').textContent = backupId;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            
+            // Store backup ID for confirmation
+            modal.dataset.backupId = backupId;
+        }
+
+        // Close restore modal
+        function closeRestoreModal() {
+            const modal = document.getElementById('restore-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            delete modal.dataset.backupId;
+        }
+
+        // Confirm restore
+        async function confirmRestore() {
+            if (!isAdmin()) return;
+            
+            const modal = document.getElementById('restore-modal');
+            const backupId = modal.dataset.backupId;
+            
+            if (!backupId) return;
+            
+            const confirmBtn = document.getElementById('confirm-restore');
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Restoring...';
+            
+            try {
+                const response = await fetch(`/backups/restore/${backupId}`, {
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(`Restore started in background...`, 'success');
+                    closeRestoreModal();
+                    await fetchBackups();
+                } else {
+                    showNotification(`Restore failed: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                console.error('Failed to restore backup:', e);
+                showNotification('Failed to restore backup - network error', 'error');
+            } finally {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Restore World';
+            }
+        }
+
+        // Fetch backup settings
+        async function fetchBackupSettings() {
+            if (!isAdmin()) return;
+            
+            try {
+                const response = await fetch('/backups/settings', {
+                    credentials: 'same-origin'
+                });
+                
+                if (!response.ok) throw new Error('Failed to fetch backup settings');
+                
+                const data = await response.json();
+                backupSettings = data;
+                
+                // Update UI
+                document.getElementById('auto-backup-toggle').checked = data.backup_auto_enabled;
+                document.getElementById('backup-hours').value = data.backup_duration_hours;
+                document.getElementById('backup-days').value = data.backup_duration_days;
+                document.getElementById('auto-delete-toggle').checked = data.backup_auto_delete_enabled;
+                document.getElementById('max-backups-slider').value = data.backup_max_count;
+                document.getElementById('max-backups-value').textContent = data.backup_max_count;
+                
+                // Update status display
+                const statusEl = document.getElementById('auto-backup-status');
+                if (data.backup_auto_enabled) {
+                    statusEl.textContent = 'Enabled';
+                    statusEl.className = 'text-sm font-medium text-green-400';
+                } else {
+                    statusEl.textContent = 'Disabled';
+                    statusEl.className = 'text-sm font-medium text-slate-400';
+                }
+                
+                // Update next backup time
+                const nextBackupEl = document.getElementById('next-backup-time');
+                if (data.next_backup) {
+                    const nextDate = new Date(data.next_backup * 1000);
+                    nextBackupEl.textContent = nextDate.toLocaleDateString() + ' ' + nextDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                } else {
+                    nextBackupEl.textContent = '--';
+                }
+                
+                // Update total interval display
+                calculateTotalInterval();
+                
+            } catch (e) {
+                console.error('Failed to fetch backup settings:', e);
+            }
+        }
+
+        // Save backup settings
+        async function saveBackupSettings() {
+            if (!isAdmin()) return;
+            
+            try {
+                const response = await fetch('/backups/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        backup_auto_enabled: document.getElementById('auto-backup-toggle').checked,
+                        backup_duration_hours: parseInt(document.getElementById('backup-hours').value),
+                        backup_duration_days: parseInt(document.getElementById('backup-days').value),
+                        backup_auto_delete_enabled: document.getElementById('auto-delete-toggle').checked,
+                        backup_max_count: parseInt(document.getElementById('max-backups-slider').value)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification('Backup settings saved', 'success');
+                    const statusEl = document.getElementById('backup-settings-status');
+                    statusEl.classList.remove('hidden');
+                    setTimeout(() => statusEl.classList.add('hidden'), 2000);
+                    
+                    await fetchBackupSettings();
+                } else {
+                    showNotification(`Failed to save settings: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                console.error('Failed to save backup settings:', e);
+                showNotification('Failed to save settings - network error', 'error');
+            }
+        }
+
+        // Calculate and display total backup interval
+        function calculateTotalInterval() {
+            const hours = parseInt(document.getElementById('backup-hours').value) || 0;
+            const days = parseInt(document.getElementById('backup-days').value) || 0;
+            const totalHours = hours + (days * 24);
+            
+            let intervalText = '';
+            if (days > 0 && hours > 0) {
+                intervalText = `${days} day${days > 1 ? 's' : ''} and ${hours} hour${hours > 1 ? 's' : ''}`;
+            } else if (days > 0) {
+                intervalText = `${days} day${days > 1 ? 's' : ''}`;
+            } else if (hours > 0) {
+                intervalText = `${hours} hour${hours > 1 ? 's' : ''}`;
+            } else {
+                intervalText = 'Disabled';
+            }
+            
+            document.getElementById('total-backup-interval').textContent = intervalText;
+        }
+
+        // Backup event listeners
+        document.getElementById('manual-backup-btn').addEventListener('click', createManualBackup);
+        document.getElementById('refresh-backups-btn').addEventListener('click', fetchBackups);
+        document.getElementById('cancel-restore').addEventListener('click', closeRestoreModal);
+        document.getElementById('confirm-restore').addEventListener('click', confirmRestore);
+        
+        // Close restore modal on backdrop click
+        document.getElementById('restore-modal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) {
+                closeRestoreModal();
+            }
+        });
+        
+        // Backup settings event listeners
+        document.getElementById('auto-backup-toggle').addEventListener('change', saveBackupSettings);
+        document.getElementById('backup-hours').addEventListener('change', () => {
+            calculateTotalInterval();
+            saveBackupSettings();
+        });
+        document.getElementById('backup-days').addEventListener('change', () => {
+            calculateTotalInterval();
+            saveBackupSettings();
+        });
+        document.getElementById('auto-delete-toggle').addEventListener('change', saveBackupSettings);
+        document.getElementById('max-backups-slider').addEventListener('input', (e) => {
+            document.getElementById('max-backups-value').textContent = e.target.value;
+        });
+        document.getElementById('max-backups-slider').addEventListener('change', saveBackupSettings);
+
+        // Load backup settings on page load (if admin) - wait for auth to complete first
+        checkAuth().then(() => {
+            if (isAdmin()) {
+                fetchBackupSettings();
+                fetchBackups();
+            }
+        });
 
         // Load settings on initialization
         loadSettings();
