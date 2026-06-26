@@ -116,5 +116,8 @@ Thumbs.db
 # Application specific
 data/*.db
 data/auth.db
+data/config.json
+data/player_stats.json
+data/uptime_stats.json
 logs/
 *.log
