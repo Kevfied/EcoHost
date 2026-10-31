@@ -1,149 +1,159 @@
 # MC-EcoHost
 
-A headless Minecraft server management suite with a Python FastAPI backend and modern web dashboard.
+A Minecraft server management suite — a FastAPI backend + web dashboard, wrapped
+by a small Tauri desktop tool that owns backend lifecycle, config, and updates.
 
-## Quick Start
+## The App (recommended)
 
-### 1. Install Dependencies
+Download `EcoHost_*_x64-setup.exe` from
+[Releases](https://github.com/Kevfied/EcoHost/releases/latest) and install.
+
+The tool is a small companion window — it is **not** the dashboard itself:
+
+- **Overview** — backend status, Minecraft state, players, power mode
+- **Server** — `ECOHOST_SERVER_DIR` folder picker + RCON settings
+  (writes backend `config.json` **and** `server.properties`, then restarts
+  the backend for you)
+- **Updates** — signed self-updates from GitHub Releases
+  (offer → download → install → auto-relaunch)
+- **App** — autostart-on-login, data folder, backend log tail
+
+Behaviors:
+
+- Launching spawns the bundled backend on `:8000` and waits for `/health`.
+- **Close hides to tray** — the backend keeps running. Tray menu:
+  *Open EcoHost / Open Dashboard / Quit* — only Quit kills the backend.
+- First launch enables login-autostart; toggle in the App tab.
+- **Open Dashboard** opens `http://localhost:8000` in your browser —
+  that is the full management UI (this is where you log in).
+- Already running `python main.py`? The tool reuses that backend and won't
+  kill it on exit — it only manages what it spawned.
+
+### Where state lives
+
+| Thing | Location |
+|---|---|
+| Tool config (`server_dir`, autostart flag) | `%LOCALAPPDATA%\EcoHost\tool.json` |
+| Backend settings incl. JWT secret + RCON | `%LOCALAPPDATA%\EcoHost\config.json` |
+| Users (auth.db), player/uptime stats | `%LOCALAPPDATA%\EcoHost\` |
+| Backend + install logs | `%LOCALAPPDATA%\EcoHost\logs\` |
+| Update store + staged downloads | `%LOCALAPPDATA%\EcoHost\appupdate.json`, `updates-dl\` |
+
+All of it survives app updates — the installer only touches the install dir.
+
+## From Source (browser mode, no app)
 
 ```powershell
 pip install -r requirements.txt
+python main.py
 ```
 
-### 2. Configure Server Path
+Dashboard: `http://localhost:8000` — do **not** open `web/dashboard.html` or
+`web/login.html` as files; they're served by the backend.
 
-Set the `ECOHOST_SERVER_DIR` environment variable, or edit `Modules/config.py` and update the default server directory path:
+In source mode everything lives under `data/` in the repo instead of
+`%LOCALAPPDATA%\EcoHost`. Point at your server:
 
 ```powershell
 $env:ECOHOST_SERVER_DIR = "C:\Path\To\Your\Minecraft\Server"
 ```
 
-```python
-SERVER_DIR = Path(os.environ.get("ECOHOST_SERVER_DIR", r"C:\Path\To\Your\Minecraft\Server"))
-```
-
-### 3. Run the Backend
-
-```powershell
-python main.py
-```
-
-The API will be available at `http://localhost:8000`
-
-### 4. Access the Dashboard
-
-Navigate to `http://localhost:8000` in your browser. The app serves the dashboard and login page itself — do **not** open `web/dashboard.html` or `web/login.html` directly as files (the API calls will fail).
-
 ## Authentication
 
-### Default Admin Account
+- First run creates `admin` / `admin` — you're forced to change it on login.
+- The default admin only spawns when the auth DB has no users. If
+  `admin`/`admin` fails, delete `auth.db` (in `data\` from source, or
+  `%LOCALAPPDATA%\EcoHost\` for the app) and restart — a fresh one is created.
+- Login rate limiting: 5 failed attempts → 15 minute lockout.
 
-On first run, a default admin account is automatically created:
+### Roles
 
-- **Username**: `admin`
-- **Password**: `admin`
-- **⚠️ IMPORTANT**: You must change this password on first login!
+- **Admin** — everything: control, settings, users
+- **Moderator** — server control, player management, logs
+- **Viewer Plus** — can start server, dashboard + logs
+- **Viewer** — read-only dashboard + logs
 
-> **Note**: The default admin is only created when `data/auth.db` contains no users. If `admin`/`admin` doesn't work, delete `data/auth.db` and restart the app — the database is recreated with the default account (any other users will be removed).
+## API (subset)
 
-### Security Setup
+| Endpoint | Method | Description | Auth |
+|---|---|---|---|
+| `/health` | GET | health check | No |
+| `/public-status` | GET | non-sensitive status (mc state, players, uptime, power mode) | No |
+| `/status` | GET | full server status | Yes |
+| `/power/start` `/power/stop` | POST | server control | Moderator+ |
+| `/power/mode` | POST | set power plan | Moderator+ |
+| `/logs`, `/ecohost-logs` | GET | log tails | permissioned |
+| `/settings` | GET/POST | settings (GET returns `rcon_password_set`, never the secret) | Admin |
+| `/users` | GET/POST | user management | Admin |
+| `/auth/login` `/auth/register` `/auth/verify` `/auth/change-password` `/auth/me` | POST/GET | auth | varies |
+| `/ws` | WebSocket | real-time status | Yes |
 
-1. Login with the default admin credentials
-2. You will be prompted to change your password immediately
-3. Create additional users with appropriate roles (admin, moderator, viewer, viewer_plus)
-4. Configure RCON settings in the dashboard if needed
+## Backend settings (`config.json`)
 
-### Role Permissions
+`auto_shutdown_enabled`, `auto_shutdown_duration` (seconds),
+`auto_start_on_ping`, `power_mode_scheduling_enabled`,
+`high_performance_start`/`end`, `ecohost_precision_enabled`,
+`rcon_enabled`, `rcon_port`, `rcon_password` — set via the dashboard, the
+app's Server tab, or edit the file and restart the backend.
 
-- **Admin**: Full access including server control, settings, user management
-- **Moderator**: Server control, player management, viewing logs
-- **Viewer Plus**: Can start server and view dashboard/logs
-- **Viewer**: Read-only access to dashboard and logs
+`server.properties` needs `enable-rcon=true` + matching `rcon.port`/
+`rcon.password` for RCON to work — the app's Server tab writes these for
+you when the file exists.
 
-## Auto-Generated Files
+## Development
 
-The following files are automatically created on first run (do not commit to git):
-
-- `data/config.json` - Application settings and JWT secret
-- `data/auth.db` - User authentication database
-- `data/player_stats.json` - Player session statistics
-- `data/uptime_stats.json` - Server uptime tracking
-
-## API Endpoints
-
-| Endpoint | Method | Description | Auth Required |
-|----------|--------|-------------|---------------|
-| `/status` | GET | Get server status (state, players, resources) | Yes |
-| `/power/start` | POST | Start the Minecraft server | Moderator+ |
-| `/power/stop` | POST | Stop the Minecraft server | Moderator+ |
-| `/logs` | GET | Get last 50 log lines | Viewer+ |
-| `/ws` | WebSocket | Real-time status updates | Yes |
-| `/health` | GET | Health check | No |
-| `/auth/login` | POST | Login and get JWT token | No |
-| `/auth/register` | POST | Register new user | No |
-| `/settings` | GET/POST | Get/update settings | Admin |
-
-## Features
-
-- **Authentication System**: JWT-based auth with role-based access control
-- **Asynchronous Process Management**: Start/stop Minecraft server via subprocess
-- **Real-time Log Watching**: Monitor `latest.log` for player events
-- **Eco-Logic Watchdog**: Auto-shutdown after configurable idle time
-- **Resource Monitoring**: CPU and RAM usage tracking
-- **WebSocket Updates**: Real-time dashboard updates
-- **Player Statistics**: Track player sessions and playtime
-- **Power Mode Scheduling**: Automatic performance mode switching
-- **RCON Integration**: Remote console control (optional)
-
-## Configuration
-
-### Server Configuration
-
-Edit `Modules/config.py` to customize:
-
-```python
-SERVER_DIR = Path(r"C:\Path\To\Server")  # Server directory
-RUN_BAT = SERVER_DIR / "run.bat"         # Launch script
-LOG_FILE = SERVER_DIR / "logs" / "latest.log"  # Log location
-IDLE_TIMEOUT_MINUTES = 5                 # Auto-shutdown timeout
+```powershell
+npm install              # once
+npm run dev              # vite on :5173
+cd src-tauri; cargo run  # app (debug) — spawns sidecar, python fallback
 ```
 
-### Application Settings
+Checks:
 
-Settings can be configured via the web dashboard or by editing `data/config.json`:
+- `npx tsc --noEmit` — frontend typecheck
+- `cd src-tauri && cargo build` — Rust
+- `cd src-tauri && cargo run --example sandbox` — feature matrix
+  (updater, config writers, backend endpoints; must end **0 failure(s)**)
 
-- `auto_shutdown_enabled` - Enable auto-shutdown on idle
-- `auto_shutdown_duration` - Idle timeout in seconds
-- `auto_start_on_ping` - Auto-start server when pinged
-- `power_mode_scheduling_enabled` - Enable scheduled power modes
-- `high_performance_start` - Time to switch to high performance
-- `high_performance_end` - Time to switch back to balanced
-- `ecohost_precision_enabled` - Smart power mode optimization
-- `rcon_enabled` - Enable RCON integration
-- `rcon_port` - RCON port (default: 25575)
-- `rcon_password` - RCON password (change from default!)
+`tauri dev` is intentionally **not** used: the CLI waits for `devUrl` before
+launching, but our backend starts inside the app — use `cargo run`.
 
-## Security Notes
+## Releasing
 
-- **Change default passwords immediately** (admin account and RCON)
-- The `data/` directory contains sensitive information and is gitignored
-- JWT secrets are auto-generated and stored in `data/config.json`
-- Rate limiting is enabled for login attempts (5 failed = 15 min lockout)
-- Keep your `data/` directory secure and backed up
+```powershell
+scripts\release.ps1 -Bump patch -Notes "what changed"
+```
+
+Bumps the version everywhere → rebuilds the PyInstaller sidecar (skipped when
+Python inputs are unchanged, `-ForceBackend` to force) → `tauri build`
+(NSIS only) → signs `latest.json` (minisign) → publishes a GitHub release
+after an explicit `y`. Clients pick it up on their next update check.
+
+- Signing key: `%LOCALAPPDATA%\EcoHost\update-sign.key` — **back it up**;
+  if it's lost, shipped clients can't verify future updates.
+- The baked-in public key lives in `src-tauri/src/updater.rs`
+  (`UPDATE_PUBKEY`).
+- Trust model: the signed manifest is the root — payload is bound by
+  sha256 inside it; serving host doesn't matter.
+- `scripts\cdp.mjs` drives WebView2 over CDP for headless UI checks
+  (launch app with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`).
+
+## Security notes
+
+- Change the default admin password on first login.
+- `data/`, `%LOCALAPPDATA%\EcoHost\`, and the signing key are gitignored —
+  keep them that way. Old repo history once contained a real RCON
+  password — if that was ever exposed on a live server, rotate it.
+- The dashboard never returns `rcon_password` — only `rcon_password_set`.
 
 ## Troubleshooting
 
-### Server won't start
-- Check that `SERVER_DIR` in `Modules/config.py` points to your Minecraft server
-- Ensure `run.bat` exists in your server directory
-- Check the logs in the dashboard for error messages
-
-### Authentication issues
-- Default credentials: `admin` / `admin`
-- If locked out, delete `data/auth.db` and restart to recreate default admin
-- Check that your browser accepts cookies for JWT token storage
-
-### Dashboard not loading
-- Ensure the backend is running on `http://localhost:8000`
-- Check browser console for CORS errors
-- Try accessing API endpoints directly to verify backend is working
+- **Backend won't come up** — check `%LOCALAPPDATA%\EcoHost\logs\backend.log`
+  (the sidecar is silent by design; that file is its only output).
+- **admin/admin fails** — stale `auth.db`; delete it, restart (see above).
+- **Server won't start** — verify `server_dir` in the Server tab points at
+  the folder containing `run.bat`; check the backend log tail in the App tab.
+- **Duplicate app in tray** — should be impossible (single-instance guard);
+  the second launch raises the existing window instead.
+- **Install/update stalled** — `%LOCALAPPDATA%\EcoHost\logs\install.log`
+  traces every step; a timed-out install restores the previous exe.
