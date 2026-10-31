@@ -220,6 +220,16 @@ pub fn run() {
     updater::launch_purge(&app_dir);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Second launch (double-click while hidden in tray, or the
+            // update's relaunch while one is up): raise the existing
+            // window instead of starting a sibling.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())

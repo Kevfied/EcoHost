@@ -1,6 +1,6 @@
 [package]
 name = "ecohost"
-version = "0.1.0"
+version = "0.1.1"
 description = "EcoHost — Minecraft server management tool"
 authors = ["you"]
 edition = "2021"
@@ -29,6 +29,7 @@ minisign-verify = "0.3.0"
 semver = "1.0.28"
 fs2 = "0.4.3"
 dirs = "6"
+tauri-plugin-single-instance = { version = "2.5.5", default-features = false }
 
 [dev-dependencies]
 tiny_http = "0.12.0"
