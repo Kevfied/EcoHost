@@ -250,16 +250,77 @@ pub fn run() {
             ack_app_update,
         ])
         .setup(|app| {
+            // First launch: enable login autostart by default. After that
+            // the App-tab toggle is the source of truth.
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let mut cfg = config::load();
+                if !cfg.autostart_configured {
+                    let _ = app.autolaunch().enable();
+                    cfg.autostart_configured = true;
+                    let _ = config::save(&cfg);
+                }
+            }
+
+            // Tray: close hides to tray (backend keeps running); only an
+            // explicit Quit really exits.
+            {
+                use tauri::{
+                    menu::{MenuBuilder, MenuItemBuilder},
+                    tray::TrayIconBuilder,
+                };
+                let menu = MenuBuilder::new(app)
+                    .item(&MenuItemBuilder::with_id("open", "Open EcoHost").build(app)?)
+                    .item(&MenuItemBuilder::with_id("dash", "Open Dashboard").build(app)?)
+                    .separator()
+                    .item(&MenuItemBuilder::with_id("quit", "Quit").build(app)?)
+                    .build()?;
+                TrayIconBuilder::new()
+                    .icon(app.default_window_icon().unwrap().clone())
+                    .tooltip("EcoHost")
+                    .menu(&menu)
+                    .on_menu_event(|app, ev| match ev.id().as_ref() {
+                        "open" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "dash" => {
+                            use tauri_plugin_opener::OpenerExt;
+                            let _ = app.opener().open_url(
+                                format!("http://localhost:{}", backend::BACKEND_PORT),
+                                None::<&str>,
+                            );
+                        }
+                        "quit" => {
+                            backend::kill(app);
+                            app.exit(0);
+                        }
+                        _ => {}
+                    })
+                    .build(app)?;
+            }
+
+            // Window close → hide to tray, don't exit.
+            if let Some(win) = app.get_webview_window("main") {
+                let w = win.clone();
+                win.on_window_event(move |e| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                        api.prevent_close();
+                        let _ = w.hide();
+                    }
+                });
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 // Backend comes up in the background — the UI polls
                 // get_overview and shows "starting…" until health lands.
                 backend::ensure_running(&handle);
             });
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.set_focus();
-            }
             Ok(())
         })
         .build(tauri::generate_context!())

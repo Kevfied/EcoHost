@@ -208,6 +208,16 @@
             display: none !important;
         }
 
+        /* Toggles: ON must read as ON — green track, off stays dim */
+        .peer:checked + div,
+        .peer:checked ~ div {
+            background: #16a34a !important;
+        }
+        .peer:checked + div:hover,
+        .peer:checked ~ div:hover {
+            background: #15803d !important;
+        }
+
         /* ---- frameless window chrome ---- */
         .titlebar {
             position: fixed;

@@ -39,6 +39,9 @@ pub struct ToolConfig {
     /// Minecraft server directory — passed to the backend as
     /// ECOHOST_SERVER_DIR on spawn.
     pub server_dir: String,
+    /// First-run flag: we auto-enable login autostart once, then respect
+    /// whatever the user toggles in the App tab.
+    pub autostart_configured: bool,
 }
 
 pub fn load() -> ToolConfig {
