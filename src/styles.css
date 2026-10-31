@@ -144,12 +144,15 @@ button.act.ghost { border-color: var(--line); color: var(--ink-dim); }
 .note { font-size: 11px; color: var(--ink-faint); padding: 6px 0; }
 .note.err { color: var(--ink); font-weight: 700; }
 
-input[type="text"].fld {
+input[type="text"].fld,
+input[type="password"].fld {
   flex: 1; background: var(--bg-3); color: var(--ink);
   border: 1px solid var(--line); border-radius: var(--r);
   padding: 6px 9px; font-family: inherit; font-size: 12px;
 }
-input[type="text"].fld:focus { outline: none; border-color: var(--ink-dim); }
+input[type="text"].fld:focus,
+input[type="password"].fld:focus { outline: none; border-color: var(--ink-dim); }
+input[type="text"].fld.small { flex: 0 0 90px; }
 
 .checkline { display: flex; gap: 9px; align-items: center; font-size: 12px; padding: 5px 0; cursor: pointer; }
 .checkline input { accent-color: var(--ink); width: 14px; height: 14px; }

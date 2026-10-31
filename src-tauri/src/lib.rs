@@ -101,11 +101,51 @@ async fn get_tool_config(_app: tauri::AppHandle) -> Result<config::ToolConfig, S
 async fn set_tool_config(
     cfg: config::ToolConfig,
 ) -> Result<bool, String> {
-    let old = config::load();
-    let dir_changed = old.server_dir != cfg.server_dir;
-    config::save(&cfg)?;
+    let mut merged = config::load();
+    let dir_changed = merged.server_dir != cfg.server_dir;
+    // Merge, don't replace — internal fields (autostart_configured) aren't
+    // owned by the UI and must survive a UI-driven save.
+    merged.server_dir = cfg.server_dir;
+    config::save(&merged)?;
     let needs_restart = dir_changed && backend::health_ok();
     Ok(needs_restart)
+}
+
+/// Save RCON settings end-to-end: backend config.json + the Minecraft
+/// server's server.properties (when it exists), then restart the backend
+/// so the new values actually take effect.
+#[tauri::command]
+async fn set_server_config(
+    app: tauri::AppHandle,
+    rcon_enabled: bool,
+    rcon_port: u16,
+    rcon_password: String,
+) -> Result<Vec<String>, String> {
+    let mut msgs: Vec<String> = Vec::new();
+
+    let cfg_path = backend::backend_config_path();
+    config::write_backend_rcon(&cfg_path, rcon_enabled, rcon_port, &rcon_password)?;
+    msgs.push(format!("backend config updated ({})", cfg_path.display()));
+
+    let dir = config::load().server_dir;
+    if dir.is_empty() {
+        msgs.push("no server directory configured — server.properties skipped".into());
+    } else {
+        msgs.push(config::update_server_properties(
+            std::path::Path::new(&dir),
+            rcon_enabled,
+            rcon_port,
+            &rcon_password,
+        )?);
+    }
+
+    // The backend reads config.json at startup — restart so it applies.
+    if backend::health_ok() {
+        msgs.push(backend::restart(&app).to_string());
+    } else {
+        msgs.push("backend is not running — values apply on next start".into());
+    }
+    Ok(msgs)
 }
 
 #[tauri::command]
@@ -248,6 +288,7 @@ pub fn run() {
             tail_backend_log,
             get_tool_config,
             set_tool_config,
+            set_server_config,
             pick_server_dir,
             open_dashboard,
             open_dir,

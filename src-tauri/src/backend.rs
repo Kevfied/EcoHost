@@ -116,6 +116,23 @@ fn dev_project_root() -> Option<PathBuf> {
     None
 }
 
+/// Where the LIVE backend keeps config.json: a frozen sidecar writes to
+/// %LOCALAPPDATA%\EcoHost, a `python main.py` dev backend to <repo>/data.
+/// We don't get told which kind is running — existence is the signal.
+pub fn backend_config_path() -> PathBuf {
+    let frozen = crate::config::app_dir().join("config.json");
+    if frozen.is_file() {
+        return frozen;
+    }
+    if let Some(dev) = dev_project_root().map(|r| r.join("data").join("config.json")) {
+        if dev.is_file() {
+            return dev;
+        }
+    }
+    // Nothing on disk yet — sidecar/installed is the production path.
+    frozen
+}
+
 /// Where backend stdout/stderr goes — the sidecar is a --noconsole exe,
 /// so this is the only place its logs survive.
 pub fn backend_log_path() -> PathBuf {

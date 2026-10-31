@@ -203,6 +203,7 @@ fn test_config(dir: &Path) {
     config::set_app_dir(dir.to_path_buf());
     let cfg = config::ToolConfig {
         server_dir: r"C:\mc\server".into(),
+        autostart_configured: false,
     };
     check("save ok", config::save(&cfg).is_ok());
     let back = config::load();
@@ -216,7 +217,53 @@ fn test_config(dir: &Path) {
     // the store and would otherwise inherit a bogus ECOHOST_SERVER_DIR.
     let _ = config::save(&config::ToolConfig {
         server_dir: String::new(),
+        autostart_configured: false,
     });
+
+    // server.properties patcher
+    let srv = dir.join("srv");
+    std::fs::create_dir_all(&srv).unwrap();
+    std::fs::write(
+        srv.join("server.properties"),
+        "motd=test\nenable-rcon=false\nrcon.port=1234\n",
+    )
+    .unwrap();
+    let msg = config::update_server_properties(&srv, true, 25575, "sekret").unwrap();
+    check("server.properties patch ok", msg.contains("updated"));
+    let body = std::fs::read_to_string(srv.join("server.properties")).unwrap();
+    check(
+        "props: rcon enabled, port replaced, password added, motd kept",
+        body.contains("enable-rcon=true")
+            && body.contains("rcon.port=25575")
+            && body.contains("rcon.password=sekret")
+            && body.contains("motd=test"),
+    );
+    // Blank password must NOT clobber the existing one.
+    config::update_server_properties(&srv, true, 25575, "").unwrap();
+    let body = std::fs::read_to_string(srv.join("server.properties")).unwrap();
+    check("blank password leaves rcon.password alone", body.contains("rcon.password=sekret"));
+    // Missing file = graceful skip, not an error.
+    let missing = config::update_server_properties(&dir.join("nope"), true, 25575, "x").unwrap();
+    check("missing server.properties → skipped msg", missing.contains("not found"));
+
+    // backend config.json merge — preserves other keys incl. secrets
+    let cfgp = dir.join("beconfig").join("config.json");
+    std::fs::create_dir_all(cfgp.parent().unwrap()).unwrap();
+    std::fs::write(&cfgp, r#"{"jwt_secret":"keepme","auto_shutdown_enabled":true}"#).unwrap();
+    config::write_backend_rcon(&cfgp, true, 25575, "pw1").unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cfgp).unwrap()).unwrap();
+    check(
+        "config merge: rcon keys set + jwt_secret preserved",
+        v["rcon_enabled"] == json!(true)
+            && v["rcon_port"] == json!(25575)
+            && v["rcon_password"] == json!("pw1")
+            && v["jwt_secret"] == json!("keepme"),
+    );
+    config::write_backend_rcon(&cfgp, true, 25575, "").unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cfgp).unwrap()).unwrap();
+    check("blank password keeps stored rcon_password", v["rcon_password"] == json!("pw1"));
 }
 
 // ---------------------------------------------------------------- backend

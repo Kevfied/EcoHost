@@ -25,6 +25,7 @@
 param(
     [switch]$SkipBuild,
     [switch]$AllowSameVersion,
+    [switch]$ForceBackend,
     [string]$Notes = "",
     [string]$Bump = "",
     [string]$KeyPath = ""
@@ -108,13 +109,32 @@ $Version = (Get-Content $TauriConf -Raw -Encoding UTF8 | ConvertFrom-Json).versi
 $Tag = "v$Version"
 
 if (-not $SkipBuild) {
-    Write-Host "Building backend sidecar (PyInstaller)…"
-    Push-Location $Repo
-    try { & pyinstaller ecohost-backend.spec --noconfirm } finally { Pop-Location }
-    if ($LASTEXITCODE -ne 0) { Fail "pyinstaller failed" }
+    # Sidecar cache: the Python backend changes far less often than the
+    # app — hash every input and skip the ~4min PyInstaller run when it's
+    # untouched. -ForceBackend rebuilds anyway.
     $sidecar = Join-Path $Repo "src-tauri\binaries\ecohost-backend-x86_64-pc-windows-msvc.exe"
-    New-Item -ItemType Directory -Force (Split-Path -Parent $sidecar) | Out-Null
-    Copy-Item (Join-Path $Repo "dist\ecohost-backend.exe") $sidecar -Force
+    $hashFile = "$sidecar.hash"
+    $srcs = @(
+        (Get-ChildItem (Join-Path $Repo "Modules") -Filter *.py),
+        (Get-ChildItem (Join-Path $Repo "web") -Recurse -File),
+        (Join-Path $Repo "main.py"),
+        (Join-Path $Repo "auth.py"),
+        (Join-Path $Repo "ecohost-backend.spec")
+    ) | Where-Object { Test-Path $_ }
+    $hash = (($srcs | ForEach-Object { (Get-FileHash $_ -Algorithm SHA256).Hash + ":" + $_.FullName }) -join "`n" | Out-String)
+    $hash = (Get-FileHash -Algorithm SHA256 -InputStream ([System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes($hash)))).Hash
+    $cached = (Test-Path $sidecar) -and (Test-Path $hashFile) -and ((Get-Content $hashFile -Raw).Trim() -eq $hash)
+    if ($cached -and -not $ForceBackend) {
+        Write-Host "Backend sources unchanged — reusing cached sidecar (use -ForceBackend to rebuild)"
+    } else {
+        Write-Host "Building backend sidecar (PyInstaller)…"
+        Push-Location $Repo
+        try { & pyinstaller ecohost-backend.spec --noconfirm } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { Fail "pyinstaller failed" }
+        New-Item -ItemType Directory -Force (Split-Path -Parent $sidecar) | Out-Null
+        Copy-Item (Join-Path $Repo "dist\ecohost-backend.exe") $sidecar -Force
+        [System.IO.File]::WriteAllText($hashFile, $hash)
+    }
 
     Write-Host "Building app v$Version (npm run tauri build)…"
     Push-Location $Repo

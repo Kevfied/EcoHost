@@ -1,6 +1,6 @@
 [package]
 name = "ecohost"
-version = "0.1.1"
+version = "0.1.2"
 description = "EcoHost — Minecraft server management tool"
 authors = ["you"]
 edition = "2021"
@@ -36,3 +36,7 @@ tiny_http = "0.12.0"
 minisign = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 base64 = "0.22"
+
+# Faster release rebuilds — binary is ~4MB anyway, incremental is a clear win.
+[profile.release]
+incremental = true

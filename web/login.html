@@ -675,7 +675,16 @@
                     credentials: 'same-origin'
                 });
                 if (response.ok) {
-                    window.location.href = '/';
+                    const data = await response.json();
+                    if (data.require_password_change) {
+                        // A flagged user must NOT be redirected to '/' —
+                        // this verify response can race a just-finished
+                        // login submit; landing on the dashboard would
+                        // tear the change-password modal down mid-show.
+                        passwordModal.classList.add('active');
+                    } else {
+                        window.location.href = '/';
+                    }
                 }
             } catch (e) {
                 // Not logged in, stay on login page
