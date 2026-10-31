@@ -1,4 +1,4 @@
-# release.ps1 — build + sign + publish an EcoHost update to GitHub Releases.
+﻿# release.ps1 — build + sign + publish an EcoHost update to GitHub Releases.
 #
 # Trust model (ported from mc-modder): the signed latest.json manifest is the
 # trust root — app clients fetch it + latest.json.minisig from the newest
@@ -158,8 +158,14 @@ Write-Host "signed manifest -> v$Version ($($Setup.Name), $([math]::Round($Setup
 
 # ---------------------------------------------------------------- same-version guard
 if (-not $AllowSameVersion) {
+    # PS5 turns a native stderr write ("release not found") into a
+    # NativeCommandError under Stop — relax it just for this probe.
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $existing = & gh release view $Tag --repo $GhRepo --json tagName 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    $rc = $LASTEXITCODE
+    $ErrorActionPreference = $eap
+    if ($rc -eq 0) {
         Fail "$Tag already exists on GitHub. Bump the version (or pass -AllowSameVersion for an emergency re-ship)."
     }
 }

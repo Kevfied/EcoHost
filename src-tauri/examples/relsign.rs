@@ -6,14 +6,19 @@
 //!   relsign sign <key-file> <file> <sig>  — detached sign
 //!   relsign pubkey <key-file>             — print base64 pubkey
 
-use minisign::{KeyPair, PublicKey, SecretKey, SecretKeyBox};
+use base64::Engine;
+use minisign::{KeyPair, PublicKey, SecretKey};
 
 fn load_sk(path: &str) -> SecretKey {
     let s = std::fs::read_to_string(path).unwrap();
-    let sk_box = SecretKeyBox::from_string(&s).unwrap();
-    // An empty (not None) password skips the interactive prompt in 0.7.9 —
-    // right decode for the unencrypted keys release.ps1 generates/uses.
-    sk_box.into_secret_key(Some(String::new())).unwrap()
+    // Second box line is base64 of the raw key structure — for unencrypted
+    // keys from_bytes() decodes it directly, bypassing the box's
+    // password/checksum path entirely (0.7.9 has no unencrypted decoder).
+    let encoded = s.lines().nth(1).expect("bad key box");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .expect("bad key base64");
+    SecretKey::from_bytes(&bytes).unwrap()
 }
 
 fn main() {
