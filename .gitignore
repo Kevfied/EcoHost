@@ -121,3 +121,14 @@ data/player_stats.json
 data/uptime_stats.json
 logs/
 *.log
+
+# Tauri / Node
+src-tauri/target/
+src-tauri/gen/
+node_modules/
+dist/
+
+# PyInstaller
+build/
+*.spec.bak
+src-tauri/binaries/

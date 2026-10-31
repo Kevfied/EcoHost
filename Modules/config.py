@@ -3,6 +3,7 @@ Configuration and global state for MC-EcoHost.
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -10,12 +11,22 @@ from typing import Optional
 # Paths
 # =============================================================================
 
+# Bundled (PyInstaller) runs unpack read-only assets to sys._MEIPASS, which is
+# wiped on exit — writable state lives under the user profile instead.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "EcoHost"
+else:
+    BASE_DIR = Path(__file__).parent.parent
+    DATA_DIR = BASE_DIR / "data"
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 SERVER_DIR = Path(os.environ.get("ECOHOST_SERVER_DIR", r"C:\Path\To\Your\Minecraft\Server"))
 RUN_BAT = SERVER_DIR / "run.bat"
 LOG_FILE = SERVER_DIR / "logs" / "latest.log"
 CONSOLE_WINDOW_TITLE = "MC_SERVER_CORE"
-CONFIG_FILE = Path(__file__).parent.parent / "data" / "config.json"
-BASE_DIR = Path(__file__).parent.parent
+CONFIG_FILE = DATA_DIR / "config.json"
 
 # =============================================================================
 # Server Configuration

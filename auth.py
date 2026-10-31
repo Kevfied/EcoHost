@@ -3,6 +3,8 @@ MC-EcoHost Authentication System
 Secure user management with JWT tokens and role-based access control
 """
 
+import os
+import sys
 import uuid
 import time
 import sqlite3
@@ -20,8 +22,16 @@ from fastapi import HTTPException, Request, Depends
 # Configuration
 # =============================================================================
 
-AUTH_DB_FILE = Path(__file__).parent / "data" / "auth.db"
-CONFIG_FILE = Path(__file__).parent / "data" / "config.json"
+# Bundled (PyInstaller) runs keep writable state under the user profile —
+# see Modules/config.py for the same rule.
+if getattr(sys, "frozen", False):
+    _DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "EcoHost"
+else:
+    _DATA_DIR = Path(__file__).parent / "data"
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+AUTH_DB_FILE = _DATA_DIR / "auth.db"
+CONFIG_FILE = _DATA_DIR / "config.json"
 
 # JWT Configuration
 SECRET_KEY: Optional[str] = None

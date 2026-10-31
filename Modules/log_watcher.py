@@ -123,7 +123,8 @@ def set_windows_power_mode(mode: str) -> bool:
             ["powercfg", "/setactive", guid],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         logger.info(f"[PowerMode] Set power mode to {mode}")
         return True
@@ -146,7 +147,8 @@ def get_current_power_mode() -> str:
             ["powercfg", "/getactivescheme"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         output = result.stdout
         if "e9a42b02-d5df-448d-aa00-03f14749eb61" in output:

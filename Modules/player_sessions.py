@@ -9,14 +9,14 @@ from pathlib import Path
 
 import logging
 
-from .config import BASE_DIR, CONFIG_FILE
+from .config import BASE_DIR, CONFIG_FILE, DATA_DIR
 from .models import ServerState, server_status
 
 logger = logging.getLogger(__name__)
 
 # File paths for persistent data
-PLAYER_STATS_FILE = BASE_DIR / "data" / "player_stats.json"
-UPTIME_STATS_FILE = BASE_DIR / "data" / "uptime_stats.json"
+PLAYER_STATS_FILE = DATA_DIR / "player_stats.json"
+UPTIME_STATS_FILE = DATA_DIR / "uptime_stats.json"
 
 # Global session data
 player_sessions: dict[str, 'PlayerSession'] = {}

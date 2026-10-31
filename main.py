@@ -120,7 +120,8 @@ def set_windows_power_mode(mode: str) -> bool:
             ["powercfg", "/setactive", guid],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         logger.info(f"[PowerMode] Set power mode to {mode}")
         return True
@@ -142,7 +143,8 @@ def get_current_power_mode() -> str:
             ["powercfg", "/getactivescheme"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         output = result.stdout
         if "e9a42b02-d5df-448d-aa00-03f14749eb61" in output:
@@ -247,6 +249,7 @@ async def lifespan(app: FastAPI):
 # FastAPI Application
 # =============================================================================
 
+APP_VERSION = "0.1.0"
 app = FastAPI(title="MC-EcoHost", lifespan=lifespan)
 
 # CORS middleware - explicit origins required when using credential (cookie) auth
@@ -374,7 +377,7 @@ async def add_security_headers(request: Request, call_next):
 
 
 # Get the directory where dashboard.html is located
-DASHBOARD_DIR = Path(__file__).parent / "web"
+DASHBOARD_DIR = BASE_DIR / "web"
 
 @app.get("/")
 async def serve_dashboard(request: Request):
@@ -1201,6 +1204,30 @@ async def websocket_endpoint(websocket: WebSocket):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "MC-EcoHost"}
+
+
+@app.get("/public-status")
+async def public_status():
+    """Unauthenticated overview for the companion tool — non-sensitive only.
+
+    Deliberately exposes nothing the dashboard requires a login for: no
+    usernames' stats, no settings, no logs — just what the little app needs
+    to draw its status card.
+    """
+    uptime = time.time() - mc_models.start_time if mc_models.start_time else 0
+    return {
+        "ok": True,
+        "service": "MC-EcoHost",
+        "mc_state": server_status.state.value,
+        "players_online": len(server_status.players),
+        "players": [p.username for p in server_status.players],
+        "mc_uptime_seconds": uptime,
+        "cpu_usage": server_status.cpu_usage,
+        "ram_usage": server_status.ram_usage,
+        "power_mode": app_settings.current_power_mode,
+        "server_dir": str(SERVER_DIR),
+        "version": APP_VERSION,
+    }
 
 
 # =============================================================================

@@ -4,41 +4,50 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MC-EcoHost | Login</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="/static/vendor/tailwind.js"></script>
     <script>
+        // Monochrome theme — see dashboard.html for the same palette remap.
+        const N = {
+            50: '#fafafa', 100: '#f5f5f5', 200: '#e5e5e5', 300: '#d4d4d4',
+            400: '#a3a3a3', 500: '#737373', 600: '#525252', 700: '#404040',
+            800: '#262626', 900: '#171717', 950: '#0a0a0a',
+        };
+        const colors = {
+            slate: N, gray: N, zinc: N, neutral: N, stone: N,
+            glass: {
+                100: 'rgba(255, 255, 255, 0.06)',
+                200: 'rgba(255, 255, 255, 0.12)',
+                300: 'rgba(255, 255, 255, 0.18)',
+            },
+        };
+        ['red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
+         'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple',
+         'fuchsia', 'pink', 'rose'].forEach(c => colors[c] = N);
         tailwind.config = {
             theme: {
                 extend: {
-                    colors: {
-                        glass: {
-                            100: 'rgba(255, 255, 255, 0.1)',
-                            200: 'rgba(255, 255, 255, 0.15)',
-                            300: 'rgba(255, 255, 255, 0.2)',
-                        },
-                    },
+                    colors,
                     fontFamily: {
-                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        sans: ['"Cascadia Mono"', 'Consolas', '"Courier New"', 'monospace'],
+                    },
+                    borderRadius: {
+                        sm: '3px', DEFAULT: '3px', md: '3px', lg: '3px',
+                        xl: '3px', '2xl': '3px', '3xl': '3px',
                     },
                     animation: {
                         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
                         'float': 'float 6s ease-in-out infinite',
                         'shake': 'shake 0.5s ease-in-out',
-                        'glow': 'glow 2s ease-in-out infinite alternate',
                     },
                     keyframes: {
                         float: {
                             '0%, 100%': { transform: 'translateY(0)' },
-                            '50%': { transform: 'translateY(-20px)' },
+                            '50%': { transform: 'translateY(-10px)' },
                         },
                         shake: {
                             '0%, 100%': { transform: 'translateX(0)' },
                             '10%, 30%, 50%, 70%, 90%': { transform: 'translateX(-5px)' },
                             '20%, 40%, 60%, 80%': { transform: 'translateX(5px)' },
-                        },
-                        glow: {
-                            '0%': { boxShadow: '0 0 20px rgba(249, 115, 22, 0.4)' },
-                            '100%': { boxShadow: '0 0 60px rgba(249, 115, 22, 0.8)' },
                         },
                     },
                 },
@@ -52,55 +61,64 @@
             box-sizing: border-box;
         }
 
+        :root {
+            --bg: #0a0a0a;
+            --bg-raised: #111111;
+            --bg-input: #161616;
+            --border: #2e2e2e;
+            --text: #e8e8e8;
+            --text-dim: #7d7d7d;
+        }
+
         body {
-            font-family: 'Inter', system-ui, sans-serif;
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+            font-size: 13px;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
             overflow: hidden;
+            padding-top: 34px;
         }
 
         .glass-card {
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            box-shadow: none;
         }
 
         .input-field {
-            background: rgba(30, 41, 59, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            transition: all 0.3s ease;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text);
+            transition: none;
         }
 
         .input-field:focus {
-            border-color: rgba(249, 115, 22, 0.5);
-            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.1);
+            border-color: var(--text);
+            box-shadow: none;
             outline: none;
         }
 
         .input-field::placeholder {
-            color: rgba(148, 163, 184, 0.6);
+            color: var(--text-dim);
         }
 
         .login-btn {
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 50%, #c2410c 100%);
-            box-shadow: 0 4px 15px rgba(249, 115, 22, 0.3);
-            transition: all 0.3s ease;
+            background: transparent;
+            border: 1px solid var(--text);
+            color: var(--text);
+            font-weight: 700;
+            transition: none;
         }
 
         .login-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(249, 115, 22, 0.4);
-        }
-
-        .login-btn:active {
-            transform: translateY(0);
+            background: var(--text);
+            color: var(--bg);
         }
 
         .login-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
+            opacity: 0.35;
+            cursor: default;
         }
 
         .error-shake {
@@ -122,7 +140,7 @@
             position: absolute;
             width: 4px;
             height: 4px;
-            background: rgba(249, 115, 22, 0.3);
+            background: var(--border);
             border-radius: 50%;
             animation: float 8s ease-in-out infinite;
         }
@@ -138,29 +156,7 @@
 
         /* Gradient orb background */
         .orb {
-            position: fixed;
-            border-radius: 50%;
-            filter: blur(80px);
-            opacity: 0.15;
-            pointer-events: none;
-        }
-
-        .orb-1 {
-            width: 400px;
-            height: 400px;
-            background: #f97316;
-            top: -100px;
-            left: -100px;
-            animation: float 20s ease-in-out infinite;
-        }
-
-        .orb-2 {
-            width: 300px;
-            height: 300px;
-            background: #10b981;
-            bottom: -50px;
-            right: -50px;
-            animation: float 15s ease-in-out infinite reverse;
+            display: none;
         }
 
         .password-toggle {
@@ -188,6 +184,11 @@
 
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
         }
 
         /* Password change modal */
@@ -221,9 +222,93 @@
         .modal-overlay.active .modal-content {
             transform: scale(1);
         }
+
+        /* ---- frameless window chrome ---- */
+        .titlebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            height: 34px;
+            padding: 0 0 0 12px;
+            background: var(--bg-raised);
+            border-bottom: 1px solid var(--border);
+            user-select: none;
+        }
+        .titlebar .app-icon {
+            width: 16px;
+            height: 16px;
+            color: var(--text);
+            flex: none;
+        }
+        .titlebar h1 {
+            font-size: 0.8rem;
+            margin: 0;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .titlebar .tb-fill { flex: 1; height: 100%; }
+        .win-btns { display: flex; height: 100%; }
+        .win-btns button {
+            border: none;
+            background: transparent;
+            width: 42px;
+            height: 100%;
+            font-family: inherit;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            cursor: pointer;
+        }
+        .win-btns button:hover { background: #242424; color: var(--text); }
+        .win-btns button.close:hover { background: var(--text); color: var(--bg); }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: var(--border); }
+        ::-webkit-scrollbar-track { background: transparent; }
     </style>
 </head>
 <body class="flex items-center justify-center">
+    <!-- Frameless window chrome (removed automatically in a plain browser) -->
+    <div class="titlebar" id="eh-titlebar">
+        <svg class="app-icon" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4 2h9v2.5H6.5v2H11v2.5H6.5v2.5H13V14H4z"/>
+        </svg>
+        <h1>EcoHost</h1>
+        <div class="tb-fill"></div>
+        <div class="win-btns">
+            <button id="tb-min" title="Minimize">&#8211;</button>
+            <button id="tb-max" title="Maximize">&#9634;</button>
+            <button id="tb-close" class="close" title="Close">&#215;</button>
+        </div>
+    </div>
+    <script>
+        (function () {
+            var bar = document.getElementById('eh-titlebar');
+            var T = window.__TAURI__;
+            if (!T || !T.window) {
+                if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+                document.body.style.paddingTop = '0';
+                return;
+            }
+            var win = T.window.getCurrentWindow();
+            document.getElementById('tb-min').onclick = function () { win.minimize(); };
+            document.getElementById('tb-max').onclick = function () { win.toggleMaximize(); };
+            document.getElementById('tb-close').onclick = function () { win.close(); };
+            bar.addEventListener('mousedown', function (e) {
+                if (e.target.closest('button')) return;
+                if (e.buttons === 1) win.startDragging();
+            });
+            bar.addEventListener('dblclick', function (e) {
+                if (e.target.closest('button')) return;
+                win.toggleMaximize();
+            });
+        })();
+    </script>
+
     <!-- Background Elements -->
     <div class="particles">
         <div class="particle"></div>

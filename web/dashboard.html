@@ -4,44 +4,62 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MC-EcoHost | Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/vendor/tailwind.js"></script>
+    <script src="/static/vendor/chart.umd.js"></script>
     <script>
+        // Monochrome theme: every chromatic family collapses to the neutral
+        // gray scale, so existing utility classes keep working but render
+        // in the mc-modder-style monochrome palette.
+        const N = {
+            50: '#fafafa', 100: '#f5f5f5', 200: '#e5e5e5', 300: '#d4d4d4',
+            400: '#a3a3a3', 500: '#737373', 600: '#525252', 700: '#404040',
+            800: '#262626', 900: '#171717', 950: '#0a0a0a',
+        };
+        const colors = {
+            slate: N, gray: N, zinc: N, neutral: N, stone: N,
+            glass: {
+                100: 'rgba(255, 255, 255, 0.06)',
+                200: 'rgba(255, 255, 255, 0.12)',
+                300: 'rgba(255, 255, 255, 0.18)',
+            },
+            status: {
+                idle: '#737373',
+                starting: '#d4d4d4',
+                active: '#e8e8e8',
+                stopping: '#a3a3a3',
+            },
+        };
+        ['red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
+         'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple',
+         'fuchsia', 'pink', 'rose'].forEach(c => colors[c] = N);
         tailwind.config = {
             theme: {
                 extend: {
-                    colors: {
-                        glass: {
-                            100: 'rgba(255, 255, 255, 0.1)',
-                            200: 'rgba(255, 255, 255, 0.15)',
-                            300: 'rgba(255, 255, 255, 0.2)',
-                        },
-                        status: {
-                            idle: '#f97316',
-                            starting: '#3b82f6',
-                            active: '#22c55e',
-                            stopping: '#eab308',
-                        },
-                    },
+                    colors,
                     fontFamily: {
-                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        sans: ['"Cascadia Mono"', 'Consolas', '"Courier New"', 'monospace'],
+                    },
+                    borderRadius: {
+                        sm: '3px', DEFAULT: '3px', md: '3px', lg: '3px',
+                        xl: '3px', '2xl': '3px', '3xl': '3px',
                     },
                     animation: {
                         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-                        'glow': 'glow 2s ease-in-out infinite alternate',
-                    },
-                    keyframes: {
-                        glow: {
-                            '0%': { boxShadow: '0 0 20px rgba(249, 115, 22, 0.4)' },
-                            '100%': { boxShadow: '0 0 40px rgba(249, 115, 22, 0.8)' },
-                        },
                     },
                 },
             },
         }
     </script>
     <style>
+        :root {
+            --bg: #0a0a0a;
+            --bg-raised: #111111;
+            --bg-input: #161616;
+            --border: #2e2e2e;
+            --text: #e8e8e8;
+            --text-dim: #7d7d7d;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -49,37 +67,36 @@
         }
 
         body {
-            font-family: 'Inter', system-ui, sans-serif;
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+            font-size: 13px;
+            background: var(--bg);
             min-height: 100vh;
-            color: #e2e8f0;
+            color: var(--text);
+            padding-top: 34px;
+            padding-bottom: 22px;
         }
 
         .glass {
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: var(--bg-raised);
+            border-right: 1px solid var(--border);
         }
 
         .glass-card {
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
         }
 
         .sidebar-item {
-            transition: all 0.3s ease;
+            transition: none;
         }
 
         .sidebar-item:hover {
-            background: rgba(255, 255, 255, 0.1);
-            transform: translateX(4px);
+            background: var(--bg-input);
         }
 
         .sidebar-item.active {
-            background: rgba(16, 185, 129, 0.2);
-            border-left: 3px solid #10b981;
+            background: var(--bg-input);
+            border-left: 3px solid var(--text);
         }
 
         .page {
@@ -91,83 +108,58 @@
         }
 
         .status-idle {
-            background: linear-gradient(145deg, #1e293b 0%, #0f172a 50%, #334155 100%);
-            box-shadow: 
-                0 0 40px rgba(99, 102, 241, 0.15),
-                inset 0 1px 0 rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.2);
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
         }
 
         .status-starting {
-            background: linear-gradient(145deg, #f97316 0%, #ea580c 50%, #c2410c 100%);
-            box-shadow: 
-                0 0 50px rgba(249, 115, 22, 0.4),
-                inset 0 1px 0 rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(249, 115, 22, 0.3);
-            animation: pulse-glow 2s ease-in-out infinite;
+            background: var(--bg-raised);
+            border: 1px solid var(--text-dim);
+            animation: pulse-border 2s ease-in-out infinite;
         }
 
         .status-active {
-            background: linear-gradient(145deg, #10b981 0%, #059669 50%, #047857 100%);
-            box-shadow: 
-                0 0 50px rgba(16, 185, 129, 0.4),
-                inset 0 1px 0 rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(16, 185, 129, 0.3);
+            background: var(--bg-raised);
+            border: 1px solid var(--text);
         }
 
         .status-stopping {
-            background: linear-gradient(145deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
-            box-shadow: 
-                0 0 50px rgba(245, 158, 11, 0.4),
-                inset 0 1px 0 rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-            animation: pulse-glow 1.5s ease-in-out infinite;
+            background: var(--bg-raised);
+            border: 1px solid var(--text-dim);
+            animation: pulse-border 1.5s ease-in-out infinite;
         }
 
-        @keyframes pulse-glow {
-            0%, 100% { 
-                box-shadow: 
-                    0 0 50px currentColor,
-                    inset 0 1px 0 rgba(255, 255, 255, 0.2);
-                opacity: 1;
-            }
-            50% { 
-                box-shadow: 
-                    0 0 70px currentColor,
-                    inset 0 1px 0 rgba(255, 255, 255, 0.2);
-                opacity: 0.9;
-            }
+        @keyframes pulse-border {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.65; }
         }
 
         .power-btn {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
-            border: 1px solid rgba(16, 185, 129, 0.4);
-            transition: all 0.2s ease;
+            background: transparent;
+            border: 1px solid var(--text);
+            color: var(--text);
+            font-weight: 700;
+            transition: none;
         }
 
         .power-btn:hover:not(:disabled) {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-        }
-
-        .power-btn:active:not(:disabled) {
-            transform: translateY(0);
+            background: var(--text);
+            color: var(--bg);
         }
 
         .power-btn.active {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
-            border: 1px solid rgba(239, 68, 68, 0.4);
+            border-color: var(--text-dim);
+            color: var(--text-dim);
         }
 
         .power-btn.active:hover:not(:disabled) {
-            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+            background: var(--text-dim);
+            color: var(--bg);
         }
 
         .power-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
+            opacity: 0.35;
+            cursor: default;
         }
 
         .indicator {
@@ -177,53 +169,151 @@
         }
 
         .indicator-online {
-            background: #22c55e;
-            box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+            background: var(--text);
         }
 
         .indicator-offline {
-            background: #ef4444;
-            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+            background: var(--border);
         }
 
         .player-card {
-            background: rgba(30, 41, 59, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            transition: all 0.3s ease;
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            transition: none;
         }
 
         .player-card:hover {
-            transform: translateY(-2px);
-            border-color: rgba(16, 185, 129, 0.3);
+            border-color: var(--text-dim);
         }
 
         .progress-bar {
             height: 4px;
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--bg-input);
+            border: 1px solid var(--border);
             border-radius: 2px;
             overflow: hidden;
         }
 
         .progress-bar-fill {
             height: 100%;
+            background: var(--text) !important;
             transition: width 0.3s ease;
         }
 
-        @keyframes float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-10px); }
-        }
-
         .float-animation {
-            animation: float 3s ease-in-out infinite;
+            animation: none;
         }
 
         .hidden {
             display: none !important;
         }
+
+        /* ---- frameless window chrome ---- */
+        .titlebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            height: 34px;
+            padding: 0 0 0 12px;
+            background: var(--bg-raised);
+            border-bottom: 1px solid var(--border);
+            user-select: none;
+        }
+        .titlebar .app-icon {
+            width: 16px;
+            height: 16px;
+            color: var(--text);
+            flex: none;
+        }
+        .titlebar h1 {
+            font-size: 0.8rem;
+            margin: 0;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .titlebar .tb-fill { flex: 1; height: 100%; }
+        .win-btns { display: flex; height: 100%; }
+        .win-btns button {
+            border: none;
+            background: transparent;
+            width: 42px;
+            height: 100%;
+            font-family: inherit;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            cursor: pointer;
+        }
+        .win-btns button:hover { background: #242424; color: var(--text); }
+        .win-btns button.close:hover { background: var(--text); color: var(--bg); }
+
+        .statusbar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            height: 22px;
+            padding: 0 12px;
+            background: var(--bg-raised);
+            border-top: 1px solid var(--border);
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        .statusbar .sb-right { margin-left: auto; }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: var(--border); }
+        ::-webkit-scrollbar-track { background: transparent; }
     </style>
 </head>
 <body class="flex">
+    <!-- Frameless window chrome (removed automatically in a plain browser) -->
+    <div class="titlebar" id="eh-titlebar">
+        <svg class="app-icon" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4 2h9v2.5H6.5v2H11v2.5H6.5v2.5H13V14H4z"/>
+        </svg>
+        <h1>EcoHost</h1>
+        <div class="tb-fill"></div>
+        <div class="win-btns">
+            <button id="tb-min" title="Minimize">&#8211;</button>
+            <button id="tb-max" title="Maximize">&#9634;</button>
+            <button id="tb-close" class="close" title="Close">&#215;</button>
+        </div>
+    </div>
+    <script>
+        (function () {
+            var bar = document.getElementById('eh-titlebar');
+            var T = window.__TAURI__;
+            if (!T || !T.window) {
+                if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+                document.body.style.paddingTop = '0';
+                return;
+            }
+            var win = T.window.getCurrentWindow();
+            document.getElementById('tb-min').onclick = function () { win.minimize(); };
+            document.getElementById('tb-max').onclick = function () { win.toggleMaximize(); };
+            document.getElementById('tb-close').onclick = function () { win.close(); };
+            bar.addEventListener('mousedown', function (e) {
+                if (e.target.closest('button')) return;
+                if (e.buttons === 1) win.startDragging();
+            });
+            bar.addEventListener('dblclick', function (e) {
+                if (e.target.closest('button')) return;
+                win.toggleMaximize();
+            });
+        })();
+    </script>
+
     <!-- Sidebar -->
     <aside class="glass w-64 min-h-screen p-4 flex flex-col">
         <div class="mb-8">
@@ -2976,6 +3066,21 @@
 
         // Load settings on initialization
         loadSettings();
+    </script>
+
+    <!-- Bottom status bar (hidden in a plain browser with the titlebar) -->
+    <div class="statusbar" id="eh-statusbar">
+        <span id="sb-backend">backend: localhost:8000</span>
+        <span class="sb-right">EcoHost</span>
+    </div>
+    <script>
+        (function () {
+            if (!(window.__TAURI__ && window.__TAURI__.window)) {
+                var sb = document.getElementById('eh-statusbar');
+                if (sb && sb.parentNode) sb.parentNode.removeChild(sb);
+                document.body.style.paddingBottom = '0';
+            }
+        })();
     </script>
 </body>
 </html>
