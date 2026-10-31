@@ -114,14 +114,14 @@ if (-not $SkipBuild) {
     # untouched. -ForceBackend rebuilds anyway.
     $sidecar = Join-Path $Repo "src-tauri\binaries\ecohost-backend-x86_64-pc-windows-msvc.exe"
     $hashFile = "$sidecar.hash"
-    $srcs = @(
-        (Get-ChildItem (Join-Path $Repo "Modules") -Filter *.py),
-        (Get-ChildItem (Join-Path $Repo "web") -Recurse -File),
-        (Join-Path $Repo "main.py"),
-        (Join-Path $Repo "auth.py"),
-        (Join-Path $Repo "ecohost-backend.spec")
-    ) | Where-Object { Test-Path $_ }
-    $hash = (($srcs | ForEach-Object { (Get-FileHash $_ -Algorithm SHA256).Hash + ":" + $_.FullName }) -join "`n" | Out-String)
+    $srcs = @()
+    $srcs += Get-ChildItem (Join-Path $Repo "Modules") -Filter *.py -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+    $srcs += Get-ChildItem (Join-Path $Repo "web") -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+    foreach ($f in @("main.py", "auth.py", "ecohost-backend.spec")) {
+        $p = Join-Path $Repo $f
+        if (Test-Path $p) { $srcs += $p }
+    }
+    $hash = (($srcs | ForEach-Object { (Get-FileHash $_ -Algorithm SHA256).Hash + ":" + $_ }) -join "`n")
     $hash = (Get-FileHash -Algorithm SHA256 -InputStream ([System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes($hash)))).Hash
     $cached = (Test-Path $sidecar) -and (Test-Path $hashFile) -and ((Get-Content $hashFile -Raw).Trim() -eq $hash)
     if ($cached -and -not $ForceBackend) {
