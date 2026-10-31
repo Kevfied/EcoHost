@@ -12,10 +12,14 @@ pip install -r requirements.txt
 
 ### 2. Configure Server Path
 
-Edit `Modules/config.py` and update the server directory path:
+Set the `ECOHOST_SERVER_DIR` environment variable, or edit `Modules/config.py` and update the default server directory path:
+
+```powershell
+$env:ECOHOST_SERVER_DIR = "C:\Path\To\Your\Minecraft\Server"
+```
 
 ```python
-SERVER_DIR = Path(r"C:\Path\To\Your\Minecraft\Server")
+SERVER_DIR = Path(os.environ.get("ECOHOST_SERVER_DIR", r"C:\Path\To\Your\Minecraft\Server"))
 ```
 
 ### 3. Run the Backend
@@ -28,14 +32,7 @@ The API will be available at `http://localhost:8000`
 
 ### 4. Access the Dashboard
 
-Open `web/dashboard.html` in your browser, or serve it:
-
-```powershell
-# Using Python's built-in server
-python -m http.server 8080 --directory web
-```
-
-Then navigate to `http://localhost:8080/dashboard.html`
+Navigate to `http://localhost:8000` in your browser. The app serves the dashboard and login page itself — do **not** open `web/dashboard.html` or `web/login.html` directly as files (the API calls will fail).
 
 ## Authentication
 
@@ -46,6 +43,8 @@ On first run, a default admin account is automatically created:
 - **Username**: `admin`
 - **Password**: `admin`
 - **⚠️ IMPORTANT**: You must change this password on first login!
+
+> **Note**: The default admin is only created when `data/auth.db` contains no users. If `admin`/`admin` doesn't work, delete `data/auth.db` and restart the app — the database is recreated with the default account (any other users will be removed).
 
 ### Security Setup
 

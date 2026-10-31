@@ -2742,9 +2742,11 @@
             const newPassword = document.getElementById('reset-password-input').value;
             
             try {
-                const response = await fetch(`/users/${userId}/password?new_password=${encodeURIComponent(newPassword)}`, {
+                const response = await fetch(`/users/${userId}/password`, {
                     method: 'PUT',
-                    credentials: 'same-origin'
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ new_password: newPassword })
                 });
                 
                 const data = await response.json();

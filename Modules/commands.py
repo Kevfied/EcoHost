@@ -3,6 +3,7 @@ Commands Module - Centralized command execution for MC-EcoHost.
 Uses RCON when available, falls back to pywinauto when needed.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -29,7 +30,8 @@ async def execute_command(command: str) -> bool:
         try:
             if is_rcon_available():
                 logger.info(f"[Commands] RCON: {command}")
-                response = send_rcon_command(command)
+                # mcrcon is blocking - run in a thread so the event loop isn't stalled
+                response = await asyncio.to_thread(send_rcon_command, command)
                 if response is not None:
                     logger.info(f"[Commands] Command sent via RCON")
                     return True
@@ -106,7 +108,7 @@ def get_player_inventory(username: str) -> Optional[str]:
         return None
 
 
-def set_gamemode(username: str, gamemode: str) -> bool:
+async def set_gamemode(username: str, gamemode: str) -> bool:
     """
     Set player gamemode using RCON when available.
     
@@ -118,7 +120,7 @@ def set_gamemode(username: str, gamemode: str) -> bool:
         True if successful, False otherwise
     """
     command = f"gamemode {gamemode} {username}"
-    return execute_command(command)
+    return await execute_command(command)
 
 
 def list_players() -> Optional[str]:
@@ -138,7 +140,7 @@ def list_players() -> Optional[str]:
         return None
 
 
-def send_message(message: str) -> bool:
+async def send_message(message: str) -> bool:
     """
     Send message to all players using RCON.
     
@@ -149,10 +151,10 @@ def send_message(message: str) -> bool:
         True if successful, False otherwise
     """
     command = f"say {message}"
-    return execute_command(command)
+    return await execute_command(command)
 
 
-def teleport_player(username: str, target: str) -> bool:
+async def teleport_player(username: str, target: str) -> bool:
     """
     Teleport player using RCON.
     
@@ -164,10 +166,10 @@ def teleport_player(username: str, target: str) -> bool:
         True if successful, False otherwise
     """
     command = f"tp {username} {target}"
-    return execute_command(command)
+    return await execute_command(command)
 
 
-def give_item(username: str, item: str, count: int = 1) -> bool:
+async def give_item(username: str, item: str, count: int = 1) -> bool:
     """
     Give item to player using RCON.
     
@@ -180,10 +182,10 @@ def give_item(username: str, item: str, count: int = 1) -> bool:
         True if successful, False otherwise
     """
     command = f"give {username} {item} {count}"
-    return execute_command(command)
+    return await execute_command(command)
 
 
-def kick_player(username: str, reason: str = "") -> bool:
+async def kick_player(username: str, reason: str = "") -> bool:
     """
     Kick player using RCON.
     
@@ -198,10 +200,10 @@ def kick_player(username: str, reason: str = "") -> bool:
         command = f"kick {username} {reason}"
     else:
         command = f"kick {username}"
-    return execute_command(command)
+    return await execute_command(command)
 
 
-def ban_player(username: str, reason: str = "") -> bool:
+async def ban_player(username: str, reason: str = "") -> bool:
     """
     Ban player using RCON.
     
@@ -216,17 +218,17 @@ def ban_player(username: str, reason: str = "") -> bool:
         command = f"ban {username} {reason}"
     else:
         command = f"ban {username}"
-    return execute_command(command)
+    return await execute_command(command)
 
 
-def stop_server() -> bool:
+async def stop_server() -> bool:
     """
     Stop the server using the best available method.
     
     Returns:
         True if command was sent, False otherwise
     """
-    return execute_command("stop")
+    return await execute_command("stop")
 
 
 # Common command aliases for convenience

@@ -15,7 +15,7 @@ from typing import Optional
 import psutil
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -24,7 +24,6 @@ from auth import (
     init_auth, init_auth_db, create_default_admin, get_all_users, get_user_by_username,
     get_user_by_id, save_user, delete_user_by_id, update_last_login,
     verify_password, hash_password, create_access_token, verify_token,
-    require_auth, require_admin, require_moderator, require_permission,
     User, UserResponse, UserCreate, UserLogin, UserRegister, ChangePasswordRequest,
     UserRole, PERMISSIONS, is_rate_limited, record_failed_attempt,
     clear_failed_attempts, is_api_rate_limited, record_api_request,
@@ -32,33 +31,32 @@ from auth import (
 )
 
 # Module imports
+from Modules import config as mc_config
+from Modules import models as mc_models
 from Modules.config import (
     SERVER_DIR, RUN_BAT, LOG_FILE, CONSOLE_WINDOW_TITLE,
     LOG_BUFFER_SIZE, MAX_PLAYERS, MINECRAFT_PORT,
     GRACEFUL_SHUTDOWN_TIMEOUT, STATUS_CHECK_INTERVAL,
-    CONFIG_FILE, BASE_DIR, IDLE_COUNTDOWN_SECONDS,
-    AUTO_START_ON_PING, stop_initiated_time, server_hung,
-    empty_server_countdown, countdown_active, ping_listener_running,
-    ecohost_precision_last_mode_change, ecohost_precision_cooldown,
-    ecohost_precision_empty_since, ECOHOST_LOG_BUFFER_SIZE
+    CONFIG_FILE, BASE_DIR, ECOHOST_LOG_BUFFER_SIZE
 )
 from Modules.models import (
     ServerState, PlayerInfo, ServerStatus, Settings,
     server_status, app_settings, log_lines, log_lock,
-    ecohost_logs, ecohost_logs_lock, start_time, log_watcher_running,
-    java_process_pid, load_settings_from_file, save_settings_to_file,
+    ecohost_logs, ecohost_logs_lock,
+    load_settings_from_file, save_settings_to_file,
     PowerResponse, StatusResponse, LogsResponse, ConsoleStatusResponse,
     SettingsResponse, MetricsHistoryResponse, PlayerStatsResponse,
     PlayerDataResponse
 )
 from Modules.server_control import console_controller, is_minecraft_process_running
-from Modules.log_watcher import start_log_watcher, record_player_join, record_player_leave, update_ecohost_precision_mode
+from Modules.log_watcher import start_log_watcher, update_ecohost_precision_mode
 from Modules.resource_monitor import get_system_resources
 from Modules.player_sessions import (
     player_sessions, server_uptime_stats, PlayerSession,
     format_duration, save_player_stats, load_player_stats,
     save_uptime_stats, load_uptime_stats, record_server_start,
-    record_server_stop, get_total_uptime
+    record_server_stop, get_total_uptime,
+    record_player_join, record_player_leave
 )
 from Modules.player_data import (
     PLAYER_DATA_CACHE_TTL,
@@ -199,12 +197,10 @@ def get_network_status() -> dict[str, bool]:
 
 def attach_to_existing_server() -> bool:
     """Detect and attach to an already-running Minecraft server by window or Java."""
-    global start_time
-    
     if PYWINAUTO_AVAILABLE and console_controller.is_console_running():
         logger.info(f"[GhostConsole] Found existing console window '{CONSOLE_WINDOW_TITLE}'")
-        start_time = time.time()
-        
+        mc_models.start_time = time.time()
+
         port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
         if port_open:
             logger.info("[GhostConsole] Server port open - marking as ACTIVE")
@@ -213,11 +209,11 @@ def attach_to_existing_server() -> bool:
             logger.info("[GhostConsole] Server port closed - marking as STARTING")
             server_status.state = ServerState.STARTING
         return True
-    
+
     if is_minecraft_process_running():
         logger.info("[GhostConsole] Found Java process without window, attaching...")
-        start_time = time.time()
-        
+        mc_models.start_time = time.time()
+
         port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
         if port_open:
             server_status.state = ServerState.ACTIVE
@@ -253,10 +249,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MC-EcoHost", lifespan=lifespan)
 
-# CORS middleware
+# CORS middleware - explicit origins required when using credential (cookie) auth
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -376,8 +377,18 @@ async def add_security_headers(request: Request, call_next):
 DASHBOARD_DIR = Path(__file__).parent / "web"
 
 @app.get("/")
-async def serve_dashboard(current_user: User = require_auth()):
-    """Serve the main dashboard (requires authentication)."""
+async def serve_dashboard(request: Request):
+    """Serve the main dashboard (redirects to login when unauthenticated)."""
+    user = None
+    token = request.cookies.get("access_token")
+    if token:
+        token_data = verify_token(token)
+        if token_data and token_data.user_id:
+            user = get_user_by_id(token_data.user_id)
+
+    if not user or not user.is_active:
+        return RedirectResponse("/login.html")
+
     dashboard_path = DASHBOARD_DIR / "dashboard.html"
     if dashboard_path.exists():
         return FileResponse(dashboard_path)
@@ -391,15 +402,6 @@ async def serve_login():
     if login_path.exists():
         return FileResponse(login_path)
     return {"error": "Login page not found"}
-
-
-@app.get("/static/{file_path:path}")
-async def serve_static(file_path: str):
-    """Serve static files from web directory."""
-    static_path = DASHBOARD_DIR / file_path
-    if static_path.exists() and static_path.is_file():
-        return FileResponse(static_path)
-    return {"error": "File not found"}
 
 
 # =============================================================================
@@ -711,23 +713,27 @@ async def update_user_role(
     return {"success": True, "message": f"Role updated to '{role.value}'"}
 
 
+class AdminPasswordReset(BaseModel):
+    new_password: str = Field(..., min_length=8)
+
+
 @app.put("/users/{user_id}/password")
 async def admin_reset_password(
     user_id: str,
-    new_password: str,
+    payload: AdminPasswordReset,
     admin: User = Depends(require_admin),
 ):
     """Reset user password (admin only)."""
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     # Validate password strength
-    is_valid, error_msg = validate_password_strength(new_password)
+    is_valid, error_msg = validate_password_strength(payload.new_password)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
-    
-    user.password_hash = hash_password(new_password)
+
+    user.password_hash = hash_password(payload.new_password)
     user.require_password_change = True  # Force password change on next login
     save_user(user)
     
@@ -765,14 +771,14 @@ async def update_user_status(
 @app.get("/status", response_model=StatusResponse)
 async def get_status(current_user: User = require_auth()):
     """Get current server status including console link state."""
-    global server_status, server_hung
+    global server_status
 
     cpu, ram = get_system_resources()
     server_status.cpu_usage = cpu
     server_status.ram_usage = ram
 
     if server_status.state == ServerState.ACTIVE:
-        server_status.uptime = time.time() - start_time
+        server_status.uptime = time.time() - mc_models.start_time
         if server_status.players:
             server_status.last_player_time = time.time()
 
@@ -792,7 +798,7 @@ async def get_status(current_user: User = require_auth()):
         max_players=MAX_PLAYERS,
         network=network,
         console_link=console_link,
-        server_hung=server_hung,
+        server_hung=mc_config.server_hung,
     )
 
 
@@ -891,8 +897,8 @@ async def stop_server(request: Request, current_user: User = Depends(require_per
     
     # Record this request
     record_api_request(client_ip)
-    
-    global server_status, server_hung
+
+    global server_status
 
     if server_status.state == ServerState.IDLE:
         return PowerResponse(
@@ -903,9 +909,9 @@ async def stop_server(request: Request, current_user: User = Depends(require_per
 
     # Record server stop for uptime tracking
     record_server_stop()
-    
+
     server_status.state = ServerState.STOPPING
-    server_hung = False  # Reset hung state
+    mc_config.server_hung = False  # Reset hung state
 
     success = await console_controller.stop()
 
@@ -927,7 +933,7 @@ async def stop_server(request: Request, current_user: User = Depends(require_per
 
 
 @app.get("/logs", response_model=LogsResponse)
-async def get_logs(current_user: User = require_auth()):
+async def get_logs(current_user: User = Depends(require_permission("view_server_logs"))):
     """Get the last 50 lines of server logs."""
     with log_lock:
         return LogsResponse(
@@ -937,7 +943,7 @@ async def get_logs(current_user: User = require_auth()):
 
 
 @app.get("/ecohost-logs", response_model=LogsResponse)
-async def get_ecohost_logs(current_user: User = require_auth()):
+async def get_ecohost_logs(current_user: User = Depends(require_permission("view_ecohost_logs"))):
     """Get the last 50 lines of EcoHost application logs."""
     with ecohost_logs_lock:
         return LogsResponse(
@@ -947,7 +953,7 @@ async def get_ecohost_logs(current_user: User = require_auth()):
 
 
 @app.post("/power/mode")
-async def set_power_mode(request: PowerModeRequest):
+async def set_power_mode(request: PowerModeRequest, current_user: User = Depends(require_permission("power_mode_control"))):
     """Manually set Windows power mode and disable auto power modes."""
     global app_settings
     
@@ -1024,7 +1030,7 @@ async def get_settings(current_user: User = require_auth()):
         "ecohost_precision_enabled": app_settings.ecohost_precision_enabled,
         "rcon_enabled": app_settings.rcon_enabled,
         "rcon_port": app_settings.rcon_port,
-        "rcon_password": app_settings.rcon_password,
+        "rcon_password_set": bool(app_settings.rcon_password),
         "ecohost_precision_status": {
             "enabled": app_settings.ecohost_precision_enabled,
             "player_count": player_count,
@@ -1149,16 +1155,17 @@ async def websocket_endpoint(websocket: WebSocket):
             server_status.ram_usage = ram
 
             if server_status.state == ServerState.ACTIVE:
-                server_status.uptime = time.time() - start_time
+                server_status.uptime = time.time() - mc_models.start_time
 
             # Check console link status
-            console_link = console_controller.is_console_running() if PYWINAUTO_AVAILABLE else False
+            console_running = console_controller.is_console_running() if PYWINAUTO_AVAILABLE else False
+            console_link = "connected" if console_running else "disconnected"
 
             # Calculate countdown remaining time
             countdown_remaining = 0
             countdown_total = app_settings.auto_shutdown_duration
-            if countdown_active and empty_server_countdown:
-                countdown_remaining = max(0, app_settings.auto_shutdown_duration - (time.time() - empty_server_countdown))
+            if mc_config.countdown_active and mc_config.empty_server_countdown:
+                countdown_remaining = max(0, app_settings.auto_shutdown_duration - (time.time() - mc_config.empty_server_countdown))
 
             data = {
                 "state": server_status.state.value,
@@ -1170,9 +1177,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 "max_players": MAX_PLAYERS,
                 "network": network,
                 "console_link": console_link,
-                "server_hung": server_hung,
+                "server_hung": mc_config.server_hung,
                 "pywinauto_available": PYWINAUTO_AVAILABLE,
-                "countdown_active": countdown_active,
+                "countdown_active": mc_config.countdown_active,
                 "countdown_remaining": int(countdown_remaining),
                 "countdown_total": countdown_total,
                 "current_power_mode": app_settings.current_power_mode,
@@ -1289,7 +1296,7 @@ async def get_resource_history(
 
 
 @app.get("/players/stats", response_model=PlayerStatsResponse)
-async def get_player_statistics_endpoint(request: Request, current_user: User = Depends(require_auth)):
+async def get_player_statistics_endpoint(request: Request, current_user: User = require_auth()):
     """Get all player statistics and history."""
     client_ip = request.client.host if request.client else "unknown"
     
@@ -1359,7 +1366,7 @@ async def get_player_statistics_endpoint(request: Request, current_user: User = 
 
 
 @app.get("/players/{username}/data", response_model=PlayerDataResponse)
-async def get_player_data(username: str, request: Request, current_user: User = Depends(require_auth)):
+async def get_player_data(username: str, request: Request, current_user: User = require_auth()):
     """Get detailed player data (inventory, gamemode, health, level, etc.)"""
     client_ip = request.client.host if request.client else "unknown"
     
@@ -1432,7 +1439,7 @@ async def set_player_gamemode(
     """Change player gamemode."""
     try:
         from Modules.commands import set_gamemode
-        success = set_gamemode(username, gamemode)
+        success = await set_gamemode(username, gamemode)
         
         if success:
             return PlayerDataResponse(

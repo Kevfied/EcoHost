@@ -2,6 +2,7 @@
 Configuration and global state for MC-EcoHost.
 """
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -9,7 +10,7 @@ from typing import Optional
 # Paths
 # =============================================================================
 
-SERVER_DIR = Path(r"C:\Users\Kevin\AppData\Roaming\.minecraft")
+SERVER_DIR = Path(os.environ.get("ECOHOST_SERVER_DIR", r"C:\Path\To\Your\Minecraft\Server"))
 RUN_BAT = SERVER_DIR / "run.bat"
 LOG_FILE = SERVER_DIR / "logs" / "latest.log"
 CONSOLE_WINDOW_TITLE = "MC_SERVER_CORE"

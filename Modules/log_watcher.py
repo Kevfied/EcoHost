@@ -11,8 +11,10 @@ from typing import Optional
 
 import logging
 
-from .config import LOG_FILE, LOG_BUFFER_SIZE, STATUS_CHECK_INTERVAL, MINECRAFT_PORT, GRACEFUL_SHUTDOWN_TIMEOUT, stop_initiated_time, server_hung, empty_server_countdown, countdown_active, ecohost_precision_last_mode_change, ecohost_precision_cooldown, ecohost_precision_empty_since
+from . import config
+from .config import LOG_FILE, LOG_BUFFER_SIZE, STATUS_CHECK_INTERVAL, MINECRAFT_PORT, GRACEFUL_SHUTDOWN_TIMEOUT
 from .models import PlayerInfo, ServerState, server_status, log_lines, log_lock, app_settings
+from .player_sessions import record_player_join, record_player_leave
 from .server_control import console_controller, is_minecraft_process_running
 
 logger = logging.getLogger(__name__)
@@ -104,17 +106,6 @@ def scan_for_existing_players():
         logger.error(f"[GhostConsole] Failed to scan for existing players: {e}")
 
 
-# Placeholder functions for player session tracking (will be in player_sessions.py)
-def record_player_join(username: str):
-    """Record player session start."""
-    pass
-
-
-def record_player_leave(username: str):
-    """Record player session end."""
-    pass
-
-
 def set_windows_power_mode(mode: str) -> bool:
     """Set Windows power mode using powercfg command."""
     try:
@@ -172,9 +163,18 @@ def get_current_power_mode() -> str:
 
 
 def is_work_hours() -> bool:
-    """Check if current time is within work hours (9 AM - 9 PM)."""
+    """Check if current time is within the configured high-performance hours."""
+    try:
+        start_hour = int(app_settings.high_performance_start.split(":")[0])
+        end_hour = int(app_settings.high_performance_end.split(":")[0])
+    except (ValueError, IndexError, AttributeError):
+        start_hour, end_hour = 9, 21
+
     current_hour = time.localtime().tm_hour
-    return 9 <= current_hour < 21
+    if start_hour <= end_hour:
+        return start_hour <= current_hour < end_hour
+    # Overnight range (e.g. 22:00 - 06:00)
+    return current_hour >= start_hour or current_hour < end_hour
 
 
 def calculate_target_power_mode(player_count: int) -> str:
@@ -220,31 +220,30 @@ def update_power_mode_scheduling():
     if not app_settings.power_mode_scheduling_enabled or app_settings.ecohost_precision_enabled:
         # Don't run if EcoHost Precision is also enabled (combined mode handles it)
         return
-    
-    global ecohost_precision_last_mode_change
+
     current_time = time.time()
-    
+
     # Check cooldown period
-    if (ecohost_precision_last_mode_change and 
-        current_time - ecohost_precision_last_mode_change < ecohost_precision_cooldown):
+    if (config.ecohost_precision_last_mode_change and
+        current_time - config.ecohost_precision_last_mode_change < config.ecohost_precision_cooldown):
         return
-    
+
     is_work_time = is_work_hours()
     current_mode = get_current_power_mode()
-    
+
     # Power Mode Scheduling standalone logic
     if is_work_time:
         target_mode = "high_performance"
     else:
         target_mode = "power_saver"
-    
+
     # Only update if mode needs to change
     if current_mode != target_mode:
         logger.info(f"[PowerModeScheduling] Work hours: {is_work_time}")
         logger.info(f"[PowerModeScheduling] Switching {current_mode} -> {target_mode}")
-        
+
         if set_windows_power_mode(target_mode):
-            ecohost_precision_last_mode_change = current_time
+            config.ecohost_precision_last_mode_change = current_time
             app_settings.current_power_mode = target_mode
 
 
@@ -252,40 +251,38 @@ def update_ecohost_precision_mode():
     """Update EcoHost Precision mode based on server state and player count."""
     if not app_settings.ecohost_precision_enabled:
         return
-    
-    global ecohost_precision_last_mode_change, ecohost_precision_empty_since
+
     current_time = time.time()
-    
+
     # Check cooldown period
-    if (ecohost_precision_last_mode_change and 
-        current_time - ecohost_precision_last_mode_change < ecohost_precision_cooldown):
+    if (config.ecohost_precision_last_mode_change and
+        current_time - config.ecohost_precision_last_mode_change < config.ecohost_precision_cooldown):
         return
-    
+
     player_count = len(server_status.players)
     target_mode = calculate_target_power_mode(player_count)
     current_mode = get_current_power_mode()
-    
+
     # Only update if mode needs to change
     if current_mode != target_mode:
         logger.info(f"[EcoHostPrecision] Player count: {player_count}, Work hours: {is_work_hours()}")
         logger.info(f"[EcoHostPrecision] Switching {current_mode} -> {target_mode}")
-        
+
         if set_windows_power_mode(target_mode):
-            ecohost_precision_last_mode_change = current_time
+            config.ecohost_precision_last_mode_change = current_time
             app_settings.current_power_mode = target_mode
-            
+
             # Update empty server tracking
             if player_count == 0:
-                if ecohost_precision_empty_since is None:
-                    ecohost_precision_empty_since = current_time
+                if config.ecohost_precision_empty_since is None:
+                    config.ecohost_precision_empty_since = current_time
             else:
-                ecohost_precision_empty_since = None
+                config.ecohost_precision_empty_since = None
 
 
 def log_watcher():
     """Background thread that monitors server status and log file."""
-    global server_status, log_lines, log_watcher_running, stop_initiated_time, server_hung
-    global empty_server_countdown, countdown_active
+    global log_watcher_running
 
     log_watcher_running = True
     last_position = 0
@@ -293,21 +290,24 @@ def log_watcher():
     java_was_running = False
     last_countdown_log = 0
 
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.warning(f"[GhostConsole] Could not create log directory {LOG_FILE.parent}: {e}")
 
     logger.info("[GhostConsole] Status monitor started")
 
     while log_watcher_running:
         try:
             current_time = time.time()
-            
+
             if current_time - last_window_check >= STATUS_CHECK_INTERVAL:
                 last_window_check = current_time
-                
+
                 window_exists = console_controller.is_console_running()
                 java_running = is_minecraft_process_running()
                 port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
-                
+
                 if java_was_running and not java_running and window_exists:
                     logger.info("[GhostConsole] Java stopped. Auto-closing CMD window...")
                     try:
@@ -317,15 +317,15 @@ def log_watcher():
                             logger.info("[GhostConsole] CMD window auto-closed")
                     except Exception as e:
                         logger.warning(f"[GhostConsole] Could not auto-close CMD: {e}")
-                
+
                 java_was_running = java_running
-                
+
                 if server_status.state == ServerState.STOPPING:
                     if not window_exists and not java_running:
                         server_status.state = ServerState.IDLE
                         server_status.players.clear()
-                        stop_initiated_time = None
-                        server_hung = False
+                        config.stop_initiated_time = None
+                        config.server_hung = False
                         logger.info("[GhostConsole] Stop complete - state changed to IDLE")
                 elif server_status.state != ServerState.STOPPING:
                     if window_exists or java_running:
@@ -339,14 +339,14 @@ def log_watcher():
                         if server_status.state != ServerState.IDLE:
                             server_status.state = ServerState.IDLE
                             server_status.players.clear()
-                            stop_initiated_time = None
-                            server_hung = False
-                
-                if stop_initiated_time and not server_hung:
-                    elapsed = current_time - stop_initiated_time
+                            config.stop_initiated_time = None
+                            config.server_hung = False
+
+                if config.stop_initiated_time and not config.server_hung:
+                    elapsed = current_time - config.stop_initiated_time
                     if elapsed > GRACEFUL_SHUTDOWN_TIMEOUT:
                         logger.warning("[GhostConsole] Server appears hung!")
-                        server_hung = True
+                        config.server_hung = True
 
             if LOG_FILE.exists():
                 current_size = LOG_FILE.stat().st_size
@@ -389,14 +389,14 @@ def log_watcher():
             update_ecohost_precision_mode()
             update_power_mode_scheduling()
             
-            if server_status.state == ServerState.ACTIVE and not server_hung and app_settings.auto_shutdown_enabled:
+            if server_status.state == ServerState.ACTIVE and not config.server_hung and app_settings.auto_shutdown_enabled:
                 if len(server_status.players) == 0:
-                    if not countdown_active:
-                        empty_server_countdown = current_time
-                        countdown_active = True
+                    if not config.countdown_active:
+                        config.empty_server_countdown = current_time
+                        config.countdown_active = True
                         logger.info(f"[SmartEnergy] Server empty - starting {app_settings.auto_shutdown_duration}s countdown")
                     else:
-                        elapsed = current_time - empty_server_countdown
+                        elapsed = current_time - config.empty_server_countdown
                         remaining = app_settings.auto_shutdown_duration - elapsed
 
                         if current_time - last_countdown_log >= 2 and remaining > 0:
@@ -405,26 +405,26 @@ def log_watcher():
 
                         if elapsed >= app_settings.auto_shutdown_duration:
                             logger.info("[SmartEnergy] Countdown expired - auto-shutting down")
-                            countdown_active = False
-                            empty_server_countdown = None
+                            config.countdown_active = False
+                            config.empty_server_countdown = None
                             server_status.state = ServerState.STOPPING
                             try:
                                 from .commands import stop_server
-                                stop_server()
+                                asyncio.run(stop_server())
                             except Exception as e:
                                 logger.error(f"[SmartEnergy] Auto-shutdown failed: {e}")
                 else:
-                    if countdown_active:
+                    if config.countdown_active:
                         logger.info("[SmartEnergy] Player joined - countdown cancelled")
-                        countdown_active = False
-                        empty_server_countdown = None
+                        config.countdown_active = False
+                        config.empty_server_countdown = None
                         last_countdown_log = 0
 
             if server_status.state == ServerState.STOPPING and len(server_status.players) > 0:
                 logger.info("[SmartEnergy] Player joined during shutdown - cancelling shutdown and reverting to ACTIVE")
                 server_status.state = ServerState.ACTIVE
-                stop_initiated_time = None
-                server_hung = False
+                config.stop_initiated_time = None
+                config.server_hung = False
 
             time.sleep(1)
 

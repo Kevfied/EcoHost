@@ -10,7 +10,9 @@ from typing import Optional
 
 import logging
 
-from .config import SERVER_DIR, RUN_BAT, CONSOLE_WINDOW_TITLE, GRACEFUL_SHUTDOWN_TIMEOUT, stop_initiated_time, server_hung
+from . import config
+from .config import SERVER_DIR, RUN_BAT, CONSOLE_WINDOW_TITLE, GRACEFUL_SHUTDOWN_TIMEOUT
+from . import models
 from .models import ServerState, server_status
 
 # Window automation imports
@@ -34,24 +36,27 @@ def is_minecraft_process_running() -> bool:
                 name = proc.info.get('name', '').lower()
                 cmdline = proc.info.get('cmdline', []) or []
                 cmdline_str = ' '.join(cmdline).lower()
-                
-                # Check for Java process with Minecraft indicators
-                if 'java' in name or 'javaw' in name:
-                    # Look for Minecraft-specific indicators in command line
-                    minecraft_indicators = [
-                        'minecraft',
-                        'forge',
-                        'fabric',
-                        'paper',
-                        'spigot',
-                        'bukkit',
-                        'server.jar',
-                        'minecraft_server',
-                        '-jar',
-                        'nogui'
-                    ]
-                    if any(indicator in cmdline_str for indicator in minecraft_indicators):
-                        return True
+
+                # Skip client-side java (javaw) and non-java processes
+                if 'java' not in name or 'javaw' in name:
+                    continue
+
+                # Look for dedicated-server indicators in the command line.
+                # Deliberately excludes generic '-jar'/'minecraft' which match
+                # the game client and unrelated java applications.
+                minecraft_server_indicators = [
+                    'server.jar',
+                    'minecraft_server',
+                    'nogui',
+                    'paper',
+                    'purpur',
+                    'spigot',
+                    'bukkit',
+                    'forge',
+                    'fabric',
+                ]
+                if any(indicator in cmdline_str for indicator in minecraft_server_indicators):
+                    return True
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
         return False
@@ -96,8 +101,6 @@ class GhostConsoleController:
 
     async def start(self) -> bool:
         """Start the Minecraft server in a visible CMD window with title."""
-        global start_time, stop_initiated_time, server_hung
-
         if not self.run_bat.exists():
             logger.error(f"[GhostConsole] run.bat not found at {self.run_bat}")
             return False
@@ -105,10 +108,9 @@ class GhostConsoleController:
         # Check if window already exists
         if self.is_console_running():
             logger.info("[GhostConsole] Console window already exists, attaching...")
-            from models import start_time
-            start_time = time.time()
-            stop_initiated_time = None
-            server_hung = False
+            models.start_time = time.time()
+            config.stop_initiated_time = None
+            config.server_hung = False
             return True
 
         try:
@@ -133,10 +135,9 @@ pause'''
             
             if self.is_console_running():
                 logger.info(f"[GhostConsole] Console window '{self.window_title}' created successfully")
-                from models import start_time
-                start_time = time.time()
-                stop_initiated_time = None
-                server_hung = False
+                models.start_time = time.time()
+                config.stop_initiated_time = None
+                config.server_hung = False
                 return True
             else:
                 logger.error("[GhostConsole] Window did not appear after start")
@@ -182,10 +183,13 @@ pause'''
                 pass  # Focus not critical
 
             # Type command and press Enter
-            # Escape spaces for pywinauto (spaces need to be {SPACE} to be sent correctly)
-            escaped_command = command.replace(" ", "{SPACE}")
+            # Escape pywinauto special chars (+^%~(){}[]) so they type literally,
+            # then send spaces literally via with_spaces=True
+            escaped_command = ''.join(
+                '{' + c + '}' if c in '+^%~(){}[]' else c for c in command
+            )
             logger.info(f"[GhostConsole] Sending command '{command}' to console window...")
-            send_keys(f"{escaped_command}{{ENTER}}")
+            send_keys(f"{escaped_command}{{ENTER}}", with_spaces=True)
             
             logger.info(f"[GhostConsole] Command '{command}' sent")
             return True
@@ -196,11 +200,9 @@ pause'''
 
     async def send_stop_command(self) -> bool:
         """Send 'stop' command to the console window using pywinauto."""
-        global stop_initiated_time
-        
         success = await self.send_command("stop")
         if success:
-            stop_initiated_time = time.time()
+            config.stop_initiated_time = time.time()
         return success
 
     async def stop(self) -> bool:
@@ -210,16 +212,14 @@ pause'''
         2. Wait indefinitely for graceful shutdown
         3. Mark as 'hung' if takes longer than 60s (but DO NOT kill)
         """
-        global stop_initiated_time, server_hung
-
         window_exists = self.is_console_running()
         java_running = is_minecraft_process_running()
 
         # Check if server is already offline
         if not window_exists and not java_running:
             logger.info("[GhostConsole] Server already offline")
-            stop_initiated_time = None
-            server_hung = False
+            config.stop_initiated_time = None
+            config.server_hung = False
             return True
 
         # Try graceful stop via window
@@ -239,26 +239,26 @@ pause'''
         wait_start = time.time()
         last_log = time.time()
         java_was_running = True
-        
+
         while True:
             window_exists = self.is_console_running()
             java_running = is_minecraft_process_running()
-            
+
             # Abort shutdown if state changed back to ACTIVE (player joined during shutdown)
             if server_status.state == ServerState.ACTIVE:
                 logger.info("[GhostConsole] Shutdown aborted - player joined during shutdown")
-                stop_initiated_time = None
-                server_hung = False
+                config.stop_initiated_time = None
+                config.server_hung = False
                 return True
-            
+
             # Check if server stopped completely
             if not window_exists and not java_running:
                 elapsed = time.time() - wait_start
                 logger.info(f"[GhostConsole] Server stopped gracefully after {elapsed:.1f}s")
-                stop_initiated_time = None
-                server_hung = False
+                config.stop_initiated_time = None
+                config.server_hung = False
                 return True
-            
+
             # Java just stopped but window still exists (CMD at "Press any key" prompt)
             if java_was_running and not java_running and window_exists:
                 logger.info("[GhostConsole] Java process stopped. Closing CMD window...")
@@ -271,14 +271,14 @@ pause'''
                 except Exception as e:
                     logger.warning(f"[GhostConsole] Could not close CMD window: {e}")
                 # Status will update on next loop iteration
-            
+
             java_was_running = java_running
-            
+
             # Mark as hung after 60s but keep waiting (don't kill)
             elapsed = time.time() - wait_start
-            if elapsed > GRACEFUL_SHUTDOWN_TIMEOUT and not server_hung:
+            if elapsed > GRACEFUL_SHUTDOWN_TIMEOUT and not config.server_hung:
                 logger.warning("[GhostConsole] Server is taking longer than 60s to stop. This is normal for large worlds. Continuing to wait...")
-                server_hung = True
+                config.server_hung = True
             
             # Log progress every 30s
             if time.time() - last_log > 30:

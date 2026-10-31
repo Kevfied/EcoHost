@@ -1033,7 +1033,7 @@ async def query_minecraft_player_data(username: str) -> dict:
             from .commands import execute_command
             logger.info(f"[PlayerData] Player {username} is online, triggering save-all flush")
             await execute_command("save-all flush")
-            time.sleep(0.5)  # Allow OS to complete write operation
+            await asyncio.sleep(0.5)  # Allow OS to complete write operation
         else:
             logger.info(f"[PlayerData] Player {username} is offline, reading saved .dat file directly")
         
@@ -1058,7 +1058,7 @@ async def query_minecraft_player_data(username: str) -> dict:
     if server_status.state == ServerState.ACTIVE:
         try:
             from .commands import get_player_data
-            response = get_player_data(username)
+            response = await asyncio.to_thread(get_player_data, username)
             
             if response:
                 debug_info["method"] = "rcon_direct"
@@ -1093,7 +1093,7 @@ async def query_minecraft_player_data(username: str) -> dict:
                         logger.warning(f"[PlayerData] Possible truncated inventory detected, fetching separately")
                         # Fetch inventory separately to avoid RCON size limits
                         from .commands import get_player_inventory
-                        inv_response = get_player_inventory(username)
+                        inv_response = await asyncio.to_thread(get_player_inventory, username)
                         if inv_response:
                             inv_items = parse_inventory_only(inv_response)
                             if inv_items:

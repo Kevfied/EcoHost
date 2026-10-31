@@ -10,7 +10,7 @@ import bcrypt
 import secrets
 from enum import Enum
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from pathlib import Path
@@ -374,12 +374,12 @@ def update_last_login(user_id: str):
 
 def hash_password(password: str) -> str:
     """Hash a password using bcrypt."""
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode()[:72], bcrypt.gensalt()).decode()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
-    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+    return bcrypt.checkpw(plain_password.encode()[:72], hashed_password.encode())
 
 
 def validate_password_strength(password: str) -> tuple[bool, str]:
@@ -442,9 +442,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode = data.copy()
     
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -460,7 +460,7 @@ def verify_token(token: str) -> Optional[TokenData]:
             username=payload.get("username"),
             role=UserRole(payload.get("role")) if payload.get("role") else None,
         )
-    except JWTError:
+    except (JWTError, ValueError, TypeError):
         return None
 
 

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Default RCON settings
 DEFAULT_RCON_PORT = 25575
-DEFAULT_RCON_PASSWORD = "Kersh159357"
+DEFAULT_RCON_PASSWORD = ""  # Never hardcode secrets - set via /settings or data/config.json
 
 
 class RCONClient:

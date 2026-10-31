@@ -57,7 +57,7 @@ class Settings:
     # RCON Settings
     rcon_enabled: bool = False
     rcon_port: int = 25575
-    rcon_password: str = "Kersh159357"
+    rcon_password: str = ""  # Set via /settings or data/config.json - never hardcode secrets
 
 
 # =============================================================================
@@ -117,13 +117,27 @@ def load_settings_from_file() -> None:
 
 
 def save_settings_to_file() -> None:
-    """Save current settings to config.json file."""
+    """Save current settings to config.json file.
+
+    Merges into the existing file so unrelated keys (e.g. jwt_secret) are preserved.
+    """
     global app_settings
     try:
-        settings_dict = asdict(app_settings)
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(settings_dict, f, indent=4)
-        logger.info(f"[Settings] Saved settings to {CONFIG_FILE}: {settings_dict}")
+        data = {}
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    data = {}
+            except Exception:
+                data = {}
+
+        data.update(asdict(app_settings))
+
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+        logger.info(f"[Settings] Saved settings to {CONFIG_FILE}")
     except Exception as e:
         logger.error(f"[Settings] Failed to save settings: {e}")
 
