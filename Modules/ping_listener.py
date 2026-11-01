@@ -15,6 +15,7 @@ import logging
 import socket
 import threading
 import time
+from typing import Optional
 
 from .config import MINECRAFT_PORT
 from . import config
@@ -42,6 +43,51 @@ def _release_socket() -> None:
             sock.close()
         except OSError:
             pass
+
+
+def _recv_varint(conn: socket.socket) -> Optional[int]:
+    """Read one VarInt off an accepted socket. None on EOF/timeout/garbage."""
+    num = 0
+    for i in range(5):
+        try:
+            b = conn.recv(1)
+        except (socket.timeout, OSError):
+            return None
+        if not b:
+            return None
+        num |= (b[0] & 0x7F) << (7 * i)
+        if not (b[0] & 0x80):
+            return num
+    return None
+
+
+def _is_login_attempt(conn: socket.socket) -> bool:
+    """Peek the MC handshake; True only for a real join (next_state 2 = login
+    or 3 = transfer).
+
+    Status pings (next_state == 1, i.e. server-list refreshes), port probes
+    and our own health checks connect but send nothing — all return False.
+    """
+    try:
+        conn.settimeout(1.5)
+        if _recv_varint(conn) is None:          # packet length
+            return False
+        if _recv_varint(conn) != 0:             # packet id (handshake = 0x00)
+            return False
+        if _recv_varint(conn) is None:          # protocol version
+            return False
+        addr_len = _recv_varint(conn)
+        if addr_len is None or addr_len > 255:
+            return False
+        to_skip = addr_len + 2                  # address string + port ushort
+        while to_skip > 0:
+            chunk = conn.recv(to_skip)
+            if not chunk:
+                return False
+            to_skip -= len(chunk)
+        return _recv_varint(conn) in (2, 3)     # next_state: 1=status, 2=login, 3=transfer
+    except (socket.timeout, OSError):
+        return False
 
 
 def _trigger_start() -> None:
@@ -82,6 +128,7 @@ def _listen_loop() -> None:
     config.ping_listener_running = True
     logger.info(f"[PingListener] Listening on :{MINECRAFT_PORT} - first ping auto-starts the server")
 
+    woke = False
     try:
         while config.ping_listener_running:
             try:
@@ -90,16 +137,17 @@ def _listen_loop() -> None:
                 continue
             except OSError:
                 break
-            conn.close()
-            if not config.ping_listener_running:
+            if _is_login_attempt(conn):
+                logger.info(f"[PingListener] Login attempt from {addr[0]} - waking server")
+                conn.close()
+                woke = True
                 break
-            logger.info(f"[PingListener] Connection from {addr[0]} - waking server")
-            break
+            conn.close()  # status ping / probe — keep listening
     finally:
         _release_socket()
         config.ping_listener_running = False
 
-    if server_status.state == ServerState.IDLE:
+    if woke and server_status.state == ServerState.IDLE:
         globals()["_suppress_until"] = time.time() + 30
         _trigger_start()
 
@@ -126,7 +174,7 @@ def sync() -> None:
         server_status.state == ServerState.IDLE
         and app_settings.auto_start_on_ping
         and not app_settings.maintenance_mode
-        and time.time() >= _suppress_until
+        and time.time() >= max(_suppress_until, config.ping_suppress_until)
     )
 
     if eligible:

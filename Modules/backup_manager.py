@@ -195,10 +195,11 @@ def create_backup(description: str = "Manual backup",
     def _do_copy() -> Dict:
         try:
             backup_path.mkdir(exist_ok=True)
-            total = max(sum(get_dir_size(d) for d in dims), 1)
+            sizes = {d: get_dir_size(d) for d in dims}  # single walk, not two
+            total = max(sum(sizes.values()), 1)
             copied = 0
-            for i, dim in enumerate(dims):
-                copied += get_dir_size(dim)
+            for dim in dims:
+                copied += sizes[dim]
                 if progress_callback:
                     progress_callback(min(0.05 + 0.9 * copied / total, 0.95),
                                       f"Copying {dim.name}...")

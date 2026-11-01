@@ -189,6 +189,8 @@ class StatusResponse(BaseModel):
     avg_tick_ms: Optional[float] = None
     maintenance_mode: bool = False
     backup_in_progress: bool = False
+    total_uptime: float = 0.0
+    session_count: int = 0
 
 
 class LogsResponse(BaseModel):

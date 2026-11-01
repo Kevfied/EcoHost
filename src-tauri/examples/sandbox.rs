@@ -376,6 +376,38 @@ fn test_backend_endpoints(tag: &str, rt: &tokio::runtime::Runtime) {
     );
 }
 
+// ---- MC handshake helpers (ping-listener protocol tests) -----------------
+
+fn varint(mut v: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let mut b = (v & 0x7f) as u8;
+        v >>= 7;
+        if v != 0 {
+            b |= 0x80;
+        }
+        out.push(b);
+        if v == 0 {
+            break;
+        }
+    }
+    out
+}
+
+/// A vanilla MC handshake packet; next_state 1 = status ping, 2 = login.
+fn mc_handshake(next_state: u32) -> Vec<u8> {
+    let mut body = varint(0); // packet id
+    body.extend(varint(767)); // protocol version
+    let addr = b"localhost";
+    body.extend(varint(addr.len() as u32));
+    body.extend_from_slice(addr);
+    body.extend_from_slice(&25565u16.to_be_bytes());
+    body.extend(varint(next_state));
+    let mut pkt = varint(body.len() as u32);
+    pkt.extend(body);
+    pkt
+}
+
 fn test_backend_python(rt: &tokio::runtime::Runtime) {
     let root = repo_root();
     let mut cmd = Command::new("python");
@@ -548,6 +580,10 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
                     && v.get("maintenance_mode").is_some()
                     && v.get("backup_in_progress").is_some(),
             );
+            check(
+                "status has total_uptime/session_count keys",
+                v.get("total_uptime").is_some() && v.get("session_count").is_some(),
+            );
         }
         None => check("GET /status authed 200", false),
     }
@@ -662,41 +698,57 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
             .unwrap_or(false),
     );
 
-    // -- backups: create → list → restore → delete --------------------------
-    let bid = post_a("/backups/create", json!({}))
+    // -- backups: create → list → restore → delete (async endpoints) --------
+    let wait_backup_done = |get_a: &dyn Fn(&str) -> Option<reqwest::Response>| {
+        // poll /status until the background backup op finishes
+        for _ in 0..40 {
+            if let Some(r) = get_a("/status") {
+                if let Ok(v) = rt.block_on(async { r.json::<serde_json::Value>().await }) {
+                    if v["backup_in_progress"] == json!(false) {
+                        return;
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    };
+    check(
+        "backup create accepted (async)",
+        post_a("/backups/create", json!({}))
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+            .map(|v| v["success"] == json!(true) && v["started"] == json!(true))
+            .unwrap_or(false),
+    );
+    wait_backup_done(&get_a);
+    let bid = get_a("/backups")
         .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
         .and_then(|v| {
-            check("backup create success", v["success"] == json!(true));
-            v["backup_id"].as_str().map(String::from)
+            v["backups"].as_array().and_then(|a| {
+                a.iter()
+                    .filter(|b| b["is_safety_backup"] != json!(true))
+                    .max_by_key(|b| b["timestamp"].as_f64().unwrap_or(0.0) as i64)
+                    .and_then(|b| b["id"].as_str())
+                    .map(String::from)
+            })
         });
     if let Some(bid) = bid {
+        check("backup appears in list after completion", true);
         check(
             "backup has both dimension dirs",
             srv.join("backups").join(&bid).join("world").is_dir()
                 && srv.join("backups").join(&bid).join("world_nether").is_dir(),
         );
-        check(
-            "backup in list",
-            get_a("/backups")
-                .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
-                .map(|v| {
-                    v["backups"]
-                        .as_array()
-                        .map(|a| a.iter().any(|b| b["id"] == bid))
-                        .unwrap_or(false)
-                })
-                .unwrap_or(false),
-        );
         // restore: destroy world file, restore, check it came back
         let target = srv.join("world").join("level.dat");
         let _ = std::fs::remove_file(&target);
         check(
-            "backup restore (IDLE) ok",
+            "backup restore accepted (async)",
             post_a(&format!("/backups/restore/{bid}"), json!({}))
                 .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
-                .map(|v| v["success"] == json!(true))
+                .map(|v| v["success"] == json!(true) && v["started"] == json!(true))
                 .unwrap_or(false),
         );
+        wait_backup_done(&get_a);
         check("restored file exists", target.is_file());
         check(
             "backup delete ok",
@@ -705,6 +757,8 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
                 .map(|v| v["success"] == json!(true))
                 .unwrap_or(false),
         );
+    } else {
+        check("backup appears in list after completion", false);
     }
 
     // -- viewer role: extended viewing + start/stop, no powerful commands ---
@@ -1236,6 +1290,78 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
         .map(|r| r.status().as_u16() == 429)
         .unwrap_or(false),
     );
+
+    // == ping-listener protocol: probes and status pings must NOT wake ======
+    // (the original bug: the monitor's own is_port_open connect woke the
+    // server ~5s after every stop)
+    {
+        use std::io::Write;
+        use std::net::TcpStream;
+
+        // wait for the listener to be armed (IDLE + eligible, async re-arm)
+        let mut armed = false;
+        for _ in 0..30 {
+            if TcpStream::connect("127.0.0.1:25565").is_ok() {
+                armed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        check("ping listener armed for protocol tests", armed);
+
+        // bare connect + close (what is_port_open does)
+        if let Ok(s) = TcpStream::connect("127.0.0.1:25565") {
+            drop(s);
+        }
+        // status ping (server-list refresh): handshake next_state=1
+        let mut status_ping_sent = false;
+        if let Ok(mut s) = TcpStream::connect("127.0.0.1:25565") {
+            let _ = s.write_all(&mc_handshake(1));
+            let _ = s.flush();
+            status_ping_sent = true;
+            drop(s);
+        }
+        std::thread::sleep(Duration::from_secs(2));
+        let st = get_a("/status")
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+        check(
+            "probe + status ping did not wake the server",
+            status_ping_sent
+                && st.map(|v| v["state"] == json!("IDLE")).unwrap_or(false),
+        );
+        check(
+            "listener still armed after non-login traffic",
+            TcpStream::connect("127.0.0.1:25565").is_ok(),
+        );
+
+        // real join handshake: next_state=3 (transfer — same wake branch as
+        // login=2, exercised in earlier runs) → wake (start fails on missing
+        // run.bat, but the wake + release + suppress path must fire)
+        if let Ok(mut s) = TcpStream::connect("127.0.0.1:25565") {
+            let _ = s.write_all(&mc_handshake(3));
+            let _ = s.flush();
+            drop(s);
+        }
+        std::thread::sleep(Duration::from_secs(3));
+        let eh = get_a("/ecohost-logs")
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+        check(
+            "transfer handshake (next_state=3) triggered wake",
+            eh.clone()
+                .map(|v| {
+                    v["logs"].as_array().map(|a| {
+                        a.iter().any(|l| {
+                            l.as_str().unwrap_or("").contains("Login attempt")
+                        })
+                    }).unwrap_or(false)
+                })
+                .unwrap_or(false),
+        );
+        check(
+            "listener released + suppressed after wake",
+            TcpStream::connect("127.0.0.1:25565").is_err(),
+        );
+    }
 
     // -- unauthed backup endpoint is still gated ----------------------------
     check(

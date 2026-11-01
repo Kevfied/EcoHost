@@ -58,6 +58,8 @@ server_hung = False
 empty_server_countdown: Optional[float] = None  # Timestamp when countdown started
 countdown_active = False
 ping_listener_running = False
+ping_suppress_until = 0.0  # don't arm the wake listener right after a stop
+PING_SUPPRESS_AFTER_STOP = 90  # seconds
 
 # EcoHost Precision State
 ecohost_precision_last_mode_change: Optional[float] = None  # Timestamp of last mode change

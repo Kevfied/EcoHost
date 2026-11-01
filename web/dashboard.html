@@ -58,6 +58,10 @@
             --border: #2e2e2e;
             --text: #e8e8e8;
             --text-dim: #7d7d7d;
+            /* Semantic status colors — used ONLY by status indicators. */
+            --ok: #4ade80;
+            --warn: #fbbf24;
+            --bad: #f87171;
         }
 
         * {
@@ -114,18 +118,21 @@
 
         .status-starting {
             background: var(--bg-raised);
-            border: 1px solid var(--text-dim);
+            border: 1px solid var(--warn);
+            box-shadow: 0 0 14px rgba(251, 191, 36, 0.25);
             animation: pulse-border 2s ease-in-out infinite;
         }
 
         .status-active {
             background: var(--bg-raised);
-            border: 1px solid var(--text);
+            border: 1px solid var(--ok);
+            box-shadow: 0 0 14px rgba(74, 222, 128, 0.25);
         }
 
         .status-stopping {
             background: var(--bg-raised);
-            border: 1px solid var(--text-dim);
+            border: 1px solid var(--bad);
+            box-shadow: 0 0 14px rgba(248, 113, 113, 0.25);
             animation: pulse-border 1.5s ease-in-out infinite;
         }
 
@@ -169,7 +176,8 @@
         }
 
         .indicator-online {
-            background: var(--text);
+            background: var(--ok);
+            box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
         }
 
         .indicator-offline {
@@ -1291,6 +1299,21 @@
         </div>
     </div>
 
+    <div id="confirm-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-[60]">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-md mx-4">
+            <h3 id="confirm-title" class="text-xl font-bold text-white mb-2">Are you sure?</h3>
+            <p id="confirm-message" class="text-slate-400 text-sm mb-6 whitespace-pre-line"></p>
+            <div class="flex gap-3">
+                <button type="button" id="confirm-cancel" class="flex-1 py-2 px-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors">
+                    Cancel
+                </button>
+                <button type="button" id="confirm-ok" class="flex-1 py-2 px-4 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
+                    Confirm
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let currentState = 'IDLE';
         let ws = null;
@@ -1299,6 +1322,43 @@
 
         // Authentication State
         let currentUser = null;
+
+        // Reusable styled confirm dialog — Promise<boolean>.
+        const confirmModalEl = document.getElementById('confirm-modal');
+        const confirmTitleEl = document.getElementById('confirm-title');
+        const confirmMsgEl = document.getElementById('confirm-message');
+        const confirmOkBtn = document.getElementById('confirm-ok');
+        const confirmCancelBtn = document.getElementById('confirm-cancel');
+        let confirmResolve = null;
+
+        function confirmAction(message, { title = 'Are you sure?', confirmLabel = 'Confirm' } = {}) {
+            return new Promise((resolve) => {
+                confirmResolve = resolve;
+                confirmTitleEl.textContent = title;
+                confirmMsgEl.textContent = message;
+                confirmOkBtn.textContent = confirmLabel;
+                confirmModalEl.classList.remove('hidden');
+                confirmModalEl.classList.add('flex');
+                confirmOkBtn.focus();
+            });
+        }
+        function _confirmClose(result) {
+            confirmModalEl.classList.add('hidden');
+            confirmModalEl.classList.remove('flex');
+            if (confirmResolve) {
+                const r = confirmResolve;
+                confirmResolve = null;
+                r(result);
+            }
+        }
+        confirmOkBtn.addEventListener('click', () => _confirmClose(true));
+        confirmCancelBtn.addEventListener('click', () => _confirmClose(false));
+        confirmModalEl.addEventListener('click', (e) => {
+            if (e.target === confirmModalEl) _confirmClose(false);
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !confirmModalEl.classList.contains('hidden')) _confirmClose(false);
+        });
         const userRoles = {
             ADMIN: 'admin',
             MODERATOR: 'moderator',
@@ -1551,6 +1611,11 @@
             // Update status indicator (compact w-24 h-24)
             statusIndicator.className = `status-${state.toLowerCase()} rounded-full w-24 h-24 flex items-center justify-center shrink-0`;
             statusText.textContent = state;
+            statusText.className = `text-sm font-bold ${
+                state === 'ACTIVE' ? 'text-green-400' :
+                state === 'STARTING' ? 'text-amber-400' :
+                state === 'STOPPING' ? 'text-red-400' : 'text-white'
+            }`;
 
             // Update power button (Professional three-state system)
             if (state === 'IDLE') {
@@ -1662,11 +1727,23 @@
                      data.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
             }
 
-            // TPS quick stats
+            // TPS quick stats — color by health: 18+ green, 15-18 amber, <15 red
             const tpsEl = document.getElementById('tps-quick');
-            if (tpsEl) tpsEl.textContent = data.tps != null ? data.tps.toFixed(1) : '--';
+            if (tpsEl) {
+                const ok = data.tps != null;
+                tpsEl.textContent = ok ? data.tps.toFixed(1) : '--';
+                tpsEl.className = ok
+                    ? (data.tps >= 18 ? 'text-green-400' : data.tps >= 15 ? 'text-amber-400' : 'text-red-400')
+                    : 'text-slate-300';
+            }
             const tickEl = document.getElementById('avg-tick-quick');
-            if (tickEl) tickEl.textContent = data.avg_tick_ms != null ? data.avg_tick_ms.toFixed(0) : '--';
+            if (tickEl) {
+                const ok = data.avg_tick_ms != null;
+                tickEl.textContent = ok ? data.avg_tick_ms.toFixed(0) : '--';
+                tickEl.className = ok
+                    ? (data.avg_tick_ms <= 50 ? 'text-green-400' : data.avg_tick_ms <= 100 ? 'text-amber-400' : 'text-red-400')
+                    : 'text-slate-300';
+            }
 
             // Auto-shutdown countdown
             const countdownEl = document.getElementById('energy-countdown');
@@ -1689,6 +1766,15 @@
 
             // Backup progress banners (dashboard + protection page share state)
             const showBackup = !!data.backup_in_progress;
+            const manualBtn = document.getElementById('manual-backup-btn');
+            if (manualBtn) manualBtn.disabled = showBackup;
+            // Edge: a backup/restore just finished → refresh list + show result
+            if (window._lastBackupInProgress && !showBackup) {
+                fetchBackups();
+                const st = document.getElementById('manual-backup-status');
+                if (st && data.backup_status_message) st.textContent = data.backup_status_message;
+            }
+            window._lastBackupInProgress = showBackup;
             [['dashboard', 'BACKUP'], ['protection', data.backup_operation === 'restore' ? 'RESTORE' : 'BACKUP']].forEach(([pfx, label]) => {
                 const notice = document.getElementById(`${pfx}-backup-notice`);
                 if (!notice) return;
@@ -1729,6 +1815,7 @@
                     alert('You do not have permission to stop the server');
                     return;
                 }
+                if (!await confirmAction('Online players will be disconnected.', { title: 'Stop Server', confirmLabel: 'Stop' })) return;
                 try {
                     const response = await fetch('/power/stop', { method: 'POST' });
                     const data = await response.json();
@@ -2194,7 +2281,7 @@
         // Player management buttons
         document.getElementById('player-kick-btn').addEventListener('click', async () => {
             if (!currentPlayerModal) return;
-            if (!confirm(`Kick ${currentPlayerModal.username}?`)) return;
+            if (!await confirmAction(`Kick ${currentPlayerModal.username}? They will be disconnected.`, { title: 'Kick Player', confirmLabel: 'Kick' })) return;
             
             try {
                 const response = await fetch('/console/command', {
@@ -2215,7 +2302,7 @@
 
         document.getElementById('player-ban-btn').addEventListener('click', async () => {
             if (!currentPlayerModal) return;
-            if (!confirm(`Ban ${currentPlayerModal.username}?`)) return;
+            if (!await confirmAction(`Ban ${currentPlayerModal.username}? They will need an admin to unban them to rejoin.`, { title: 'Ban Player', confirmLabel: 'Ban' })) return;
             
             try {
                 const response = await fetch('/console/command', {
@@ -2638,7 +2725,7 @@
                     
                     if (item.potion_effects && item.potion_effects.length > 0) {
                         item.potion_effects.forEach(effect => {
-                            const duration = formatDuration(effect.duration);
+                            const duration = formatTicks(effect.duration);
                             const amplifier = effect.amplifier > 0 ? ` ${effect.amplifier + 1}` : '';
                             tooltipContent += `<div class="text-xs text-slate-300 ml-1">• ${formatEffectName(effect.id)}${amplifier} (${duration})</div>`;
                         });
@@ -2803,7 +2890,7 @@
             return names[effectId] || effectId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
         }
         
-        function formatDuration(ticks) {
+        function formatTicks(ticks) {
             const seconds = Math.floor(ticks / 20);
             const minutes = Math.floor(seconds / 60);
             const remainingSeconds = seconds % 60;
@@ -2878,7 +2965,7 @@
         // Emergency Shutdown (admin)
         // =================================================================
         async function emergencyShutdown() {
-            if (!confirm('EMERGENCY SHUTDOWN\n\nThis sends a graceful stop, then force-kills the server process if it is still alive after ~15s. World corruption is possible.\n\nContinue?')) {
+            if (!await confirmAction('This sends a graceful stop, then force-kills the server process if it is still alive after ~15s. World corruption is possible.', { title: 'Emergency Shutdown', confirmLabel: 'Force Shutdown' })) {
                 return;
             }
             const btn = document.getElementById('emergency-shutdown-button');
@@ -3006,8 +3093,9 @@
                     credentials: 'same-origin'
                 });
                 const data = await response.json();
-                status.textContent = data.success ? `Done: ${data.backup_id}` : `Failed: ${data.error || data.message}`;
-                if (data.success) fetchBackups();
+                status.textContent = data.started
+                    ? 'Backup running — live progress in the banner above. The list refreshes when it finishes.'
+                    : `Failed: ${data.error || data.message}`;
             } catch (e) {
                 status.textContent = `Failed: ${e}`;
             } finally {
@@ -3041,7 +3129,7 @@
         document.getElementById('refresh-backups-btn')?.addEventListener('click', fetchBackups);
 
         async function restoreBackup(id) {
-            if (!confirm(`Restore "${id}"?\n\nCurrent world folders will be replaced (a safety copy is made first). The server must be stopped.`)) return;
+            if (!await confirmAction(`Restore "${id}"?\n\nCurrent world folders will be replaced (a safety copy is made first). The server must be stopped.`, { title: 'Restore Backup', confirmLabel: 'Restore' })) return;
             try {
                 const response = await fetch(`/backups/restore/${id}`, {
                     method: 'POST',
@@ -3056,7 +3144,7 @@
         }
 
         async function deleteBackup(id) {
-            if (!confirm(`Delete backup "${id}"? This cannot be undone.`)) return;
+            if (!await confirmAction(`Delete backup "${id}"? This cannot be undone.`, { title: 'Delete Backup', confirmLabel: 'Delete' })) return;
             try {
                 const response = await fetch(`/backups/${id}`, {
                     method: 'DELETE',
@@ -3073,7 +3161,7 @@
         // Player data deletion (player_management)
         document.getElementById('player-delete-btn')?.addEventListener('click', async () => {
             if (!currentPlayerModal?.username) return;
-            if (!confirm(`Delete all stored data for ${currentPlayerModal.username}? (does not kick/ban them)`)) return;
+            if (!await confirmAction(`Delete all stored stats for ${currentPlayerModal.username}? This cannot be undone (does not kick/ban them).`, { title: 'Delete Player Data', confirmLabel: 'Delete' })) return;
             try {
                 const response = await fetch(`/players/${encodeURIComponent(currentPlayerModal.username)}`, {
                     method: 'DELETE',
@@ -3314,7 +3402,7 @@
 
         // User actions
         window.toggleUserStatus = async (userId, enable) => {
-            if (!confirm(`Are you sure you want to ${enable ? 'enable' : 'disable'} this user?`)) return;
+            if (!await confirmAction(`Are you sure you want to ${enable ? 'enable' : 'disable'} this user?`, { title: enable ? 'Enable User' : 'Disable User', confirmLabel: enable ? 'Enable' : 'Disable' })) return;
             
             try {
                 const response = await fetch(`/users/${userId}/status?is_active=${enable}`, {
@@ -3359,7 +3447,7 @@
         };
 
         window.deleteUser = async (userId) => {
-            if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
+            if (!await confirmAction('Are you sure you want to delete this user? This action cannot be undone.', { title: 'Delete User', confirmLabel: 'Delete' })) return;
             
             try {
                 const response = await fetch(`/users/${userId}`, {

@@ -869,6 +869,8 @@ async def get_status(current_user: User = require_auth()):
         avg_tick_ms=server_status.avg_tick_ms,
         maintenance_mode=app_settings.maintenance_mode,
         backup_in_progress=server_status.backup_in_progress,
+        total_uptime=get_total_uptime(),
+        session_count=server_uptime_stats.get("session_count", 0),
     )
 
 
@@ -1340,6 +1342,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 "backup_operation": server_status.backup_operation,
                 "backup_progress": server_status.backup_progress,
                 "backup_status_message": server_status.backup_status_message,
+                "total_uptime": get_total_uptime(),
+                "session_count": server_uptime_stats.get("session_count", 0),
             }
 
             await websocket.send_json(data)
@@ -1767,6 +1771,23 @@ async def list_backups_endpoint(current_user: User = Depends(require_admin)):
     return await asyncio.to_thread(list_backups)
 
 
+def _run_backup_op(operation: str, fn, *args):
+    """Background runner for backup/restore — progress flows to the WS
+    broadcast via _backup_progress; result lands in backup_status_message."""
+    try:
+        result = fn(*args)
+        server_status.backup_status_message = (
+            result.get("message") or result.get("error") or f"{operation} finished"
+        )
+    except Exception as e:
+        logger.error(f"[Backup] {operation} failed: {e}")
+        server_status.backup_status_message = f"{operation} failed: {e}"
+    finally:
+        server_status.backup_in_progress = False
+        server_status.backup_operation = None
+        server_status.backup_progress = 0.0
+
+
 @app.post("/backups/create", response_model=dict)
 async def create_backup_endpoint(current_user: User = Depends(require_admin)):
     if not app_settings.backup_enabled:
@@ -1774,17 +1795,25 @@ async def create_backup_endpoint(current_user: User = Depends(require_admin)):
     if server_status.backup_in_progress:
         return {"success": False, "error": "A backup/restore is already running"}
 
-    from Modules.backup_manager import create_backup
+    from Modules.backup_manager import create_backup, _dimension_dirs
+    if not _dimension_dirs():
+        return {"success": False, "error": f"No world folders found under {SERVER_DIR}"}
+    if server_status.state == ServerState.ACTIVE:
+        from Modules.rcon_client import is_rcon_available
+        if not is_rcon_available():
+            return {"success": False,
+                    "error": "Server is running and RCON is unavailable — refusing to copy a live world"}
+
     server_status.backup_in_progress = True
     server_status.backup_operation = "backup"
-    try:
-        result = await asyncio.to_thread(create_backup, "Manual backup", _backup_progress)
-    finally:
-        server_status.backup_in_progress = False
-        server_status.backup_operation = None
-        server_status.backup_progress = 0.0
-        server_status.backup_status_message = ""
-    return result
+    server_status.backup_progress = 0.0
+    server_status.backup_status_message = "Starting backup..."
+    threading.Thread(
+        target=_run_backup_op,
+        args=("backup", create_backup, "Manual backup", _backup_progress),
+        daemon=True,
+    ).start()
+    return {"success": True, "started": True}
 
 
 @app.post("/backups/restore/{backup_id}", response_model=dict)
@@ -1799,14 +1828,14 @@ async def restore_backup_endpoint(backup_id: str, current_user: User = Depends(r
 
     server_status.backup_in_progress = True
     server_status.backup_operation = "restore"
-    try:
-        result = await asyncio.to_thread(restore_backup, backup_id, _backup_progress)
-    finally:
-        server_status.backup_in_progress = False
-        server_status.backup_operation = None
-        server_status.backup_progress = 0.0
-        server_status.backup_status_message = ""
-    return result
+    server_status.backup_progress = 0.0
+    server_status.backup_status_message = "Starting restore..."
+    threading.Thread(
+        target=_run_backup_op,
+        args=("restore", restore_backup, backup_id, _backup_progress),
+        daemon=True,
+    ).start()
+    return {"success": True, "started": True}
 
 
 @app.delete("/backups/{backup_id}", response_model=dict)

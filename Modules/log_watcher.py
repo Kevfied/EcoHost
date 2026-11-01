@@ -313,7 +313,10 @@ def log_watcher():
 
                 window_exists = console_controller.is_console_running()
                 java_running = is_minecraft_process_running()
-                port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
+                # Skip the probe while OUR wake listener holds the port —
+                # otherwise the port check pings ourselves and reads true
+                # even though java is down.
+                port_open = (not config.ping_listener_running) and is_port_open("127.0.0.1", MINECRAFT_PORT)
 
                 if java_was_running and not java_running and window_exists:
                     logger.info("[GhostConsole] Java stopped. Auto-closing CMD window...")
@@ -333,6 +336,9 @@ def log_watcher():
                         server_status.players.clear()
                         config.stop_initiated_time = None
                         config.server_hung = False
+                        # Deliberate stop — don't let a stray ping resurrect
+                        # the server for a while.
+                        config.ping_suppress_until = current_time + config.PING_SUPPRESS_AFTER_STOP
                         logger.info("[GhostConsole] Stop complete - state changed to IDLE")
                 elif server_status.state != ServerState.STOPPING:
                     if window_exists or java_running:
@@ -348,6 +354,7 @@ def log_watcher():
                             server_status.players.clear()
                             config.stop_initiated_time = None
                             config.server_hung = False
+                            config.ping_suppress_until = current_time + config.PING_SUPPRESS_AFTER_STOP
 
                 if config.stop_initiated_time and not config.server_hung:
                     elapsed = current_time - config.stop_initiated_time

@@ -243,20 +243,37 @@ async def execute_console_command(command: str) -> bool:
 
 _tps_cache: tuple = (0.0, None)  # (fetched_at, tps_value)
 _TPS_CACHE_TTL = 8.0  # seconds — status/WS polls must not hammer RCON
+_tps_unsupported: bool = False  # server answers neither `tps` nor `forge tps`
 
 
 def _parse_tps(response: str) -> Optional[float]:
     """Parse TPS out of server-specific response formats.
 
     Paper/Purpur: "TPS from last 1m, 5m, 15m: 20.0, 20.0, 19.9"
-    Vanilla/spigot-ish: similar numeric lists. Take the first number.
+    Parse after the LAST colon so the "1m/5m/15m" labels aren't mistaken
+    for the value.
     """
     import re
-    match = re.search(r"(\d+(?:\.\d+)?)", response or "")
+    tail = (response or "").rsplit(":", 1)[-1]
+    match = re.search(r"(\d+(?:\.\d+)?)", tail)
     if not match:
         return None
     try:
         value = float(match.group(1))
+        return value if 0 < value <= 20.5 else None
+    except ValueError:
+        return None
+
+
+def _parse_forge_tps(response: str) -> Optional[float]:
+    """Forge `forge tps` prints per-dim 'Mean TPS: 20.0' — take the last one
+    (overall dims line comes last) or the first match."""
+    import re
+    matches = re.findall(r"Mean TPS:\s*(\d+(?:\.\d+)?)", response or "")
+    if not matches:
+        return None
+    try:
+        value = float(matches[-1])
         return value if 0 < value <= 20.5 else None
     except ValueError:
         return None
@@ -269,10 +286,13 @@ async def get_server_tps() -> Optional[float]:
     a running loop). Returns None when the server isn't ACTIVE, RCON is
     off, or the server type doesn't answer `tps`.
     """
-    global _tps_cache
+    global _tps_cache, _tps_unsupported
     import time as _time
 
     if server_status.state != ServerState.ACTIVE or not is_rcon_available():
+        _tps_unsupported = False  # fresh server process may be a different type
+        return None
+    if _tps_unsupported:
         return None
 
     now = _time.time()
@@ -282,6 +302,13 @@ async def get_server_tps() -> Optional[float]:
     try:
         response = await asyncio.to_thread(send_rcon_command, "tps")
         tps = _parse_tps(response)
+        if tps is None:
+            # Vanilla has no `tps` — try Forge's variant before giving up
+            response = await asyncio.to_thread(send_rcon_command, "forge tps")
+            tps = _parse_forge_tps(response)
+        if tps is None:
+            _tps_unsupported = True
+            logger.debug("[TPS] Server answers neither `tps` nor `forge tps` — TPS disabled")
         _tps_cache = (now, tps)
         return tps
     except Exception as e:
