@@ -73,7 +73,7 @@ export default function ServerView({ ov }: { ov: Overview | null }) {
     }
   };
 
-  const liveDir = ov?.managed ? ov.spawned_dir : ov?.public_status?.server_dir;
+  const liveDir = ov?.managed ? ov.spawned_dir : dir;
 
   return (
     <div className="view">

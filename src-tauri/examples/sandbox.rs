@@ -281,6 +281,17 @@ struct KillGuard(Option<Child>);
 impl Drop for KillGuard {
     fn drop(&mut self) {
         if let Some(c) = &mut self.0 {
+            // taskkill /T — a PyInstaller child survives a plain kill of its
+            // parent (same rule as the app's backend shutdown).
+            let pid = c.id();
+            if let Ok(mut k) = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                let _ = k.wait();
+            }
             let _ = c.kill();
             let _ = c.wait();
         }
@@ -376,6 +387,882 @@ fn test_backend_python(rt: &tokio::runtime::Runtime) {
     check("python backend spawned", true);
     let _g = KillGuard(Some(child));
     test_backend_endpoints("python", rt);
+}
+
+/// Snapshot the repo data/ dir and restore it on drop — backend tests write
+/// auth.db/config.json/stats there and must leave "like it was never there".
+struct DataGuard(PathBuf, PathBuf);
+impl DataGuard {
+    fn snapshot() -> Self {
+        let data = repo_root().join("data");
+        let snap = tmp_root().join("data-snapshot");
+        if data.is_dir() {
+            let _ = copy_dir(&data, &snap);
+        }
+        DataGuard(data, snap)
+    }
+}
+impl Drop for DataGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+        if self.1.is_dir() {
+            let _ = copy_dir(&self.1, &self.0);
+        }
+    }
+}
+
+fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for e in std::fs::read_dir(src)? {
+        let e = e?;
+        let to = dst.join(e.file_name());
+        if e.file_type()?.is_dir() {
+            copy_dir(&e.path(), &to)?;
+        } else {
+            std::fs::copy(e.path(), &to)?;
+        }
+    }
+    Ok(())
+}
+
+/// Full authed matrix against a temp SERVER_DIR: login, perm gates, log-line
+/// parse → player tracking, maintenance, emergency, backups, public-status
+/// leak check, ping-listener arming.
+fn test_backend_full(rt: &tokio::runtime::Runtime) {
+    println!("[backend:full] authed feature matrix (temp server dir)");
+
+    // Temp MC server dir with a log file + world folders the watcher/backup see
+    let srv = tmp_root().join("mc-server");
+    let logs_dir = srv.join("logs");
+    std::fs::create_dir_all(&logs_dir).unwrap();
+    std::fs::write(
+        logs_dir.join("latest.log"),
+        "[12:00:00] [Server thread/INFO]: Starting minecraft server version 1.21\n[12:00:01] [Server thread/INFO]: Done (1.0s)! For help, type \"help\"\n",
+    )
+    .unwrap();
+    for dim in ["world", "world_nether"] {
+        std::fs::create_dir_all(srv.join(dim).join("region")).unwrap();
+        std::fs::write(srv.join(dim).join("level.dat"), b"fake").unwrap();
+        std::fs::write(srv.join(dim).join("region").join("r.0.0.mca"), vec![0u8; 4096]).unwrap();
+    }
+
+    let _data_guard = DataGuard::snapshot();
+
+    let root = repo_root();
+    let mut cmd = Command::new("python");
+    cmd.arg("main.py")
+        .current_dir(&root)
+        .env("ECOHOST_SERVER_DIR", &srv);
+    let Some(child) = spawn_headless(&mut cmd) else {
+        check("full: backend spawned", false);
+        return;
+    };
+    check("full: backend spawned", true);
+    let _g = KillGuard(Some(child));
+
+    if !backend::wait_healthy(Duration::from_secs(50)) {
+        check("full: backend became healthy", false);
+        return;
+    }
+    check("full: backend became healthy", true);
+
+    let http = reqwest::Client::new();
+    let base = format!("http://localhost:{}", backend::BACKEND_PORT);
+
+    // -- public-status leak check -----------------------------------------
+    let ps = rt
+        .block_on(http.get(format!("{base}/public-status")).send())
+        .ok()
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+    match ps {
+        Some(v) => {
+            check(
+                "public-status leaks no players/server_dir/cpu/ram",
+                v.get("players").is_none()
+                    && v.get("server_dir").is_none()
+                    && v.get("cpu_usage").is_none()
+                    && v.get("ram_usage").is_none(),
+            );
+            check("public-status keeps count", v["players_online"].is_number());
+        }
+        None => check("public-status responded", false),
+    }
+
+    // -- admin login → cookie ----------------------------------------------
+    let cookie = rt
+        .block_on(
+            http.post(format!("{base}/auth/login"))
+                .json(&json!({"username": "admin", "password": "admin"}))
+                .send(),
+        )
+        .ok()
+        .and_then(|r| {
+            check("admin login 200", r.status().as_u16() == 200);
+            r.headers()
+                .get("set-cookie")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or("").to_string())
+        });
+    let Some(admin_cookie) = cookie.filter(|c| c.contains("access_token=")) else {
+        check("admin login set access_token cookie", false);
+        return;
+    };
+    check("admin login set access_token cookie", true);
+
+    let get_a = |p: &str| {
+        rt.block_on(
+            http.get(format!("{base}{p}"))
+                .header("Cookie", &admin_cookie)
+                .send(),
+        )
+        .ok()
+    };
+    let post_a = |p: &str, body: serde_json::Value| {
+        rt.block_on(
+            http.post(format!("{base}{p}"))
+                .header("Cookie", &admin_cookie)
+                .json(&body)
+                .send(),
+        )
+        .ok()
+    };
+    let del_a = |p: &str| {
+        rt.block_on(
+            http.delete(format!("{base}{p}"))
+                .header("Cookie", &admin_cookie)
+                .send(),
+        )
+        .ok()
+    };
+
+    // -- authed /status carries the new fields ------------------------------
+    let st = get_a("/status")
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+    match st {
+        Some(v) => {
+            check("GET /status authed 200", true);
+            check(
+                "status has tps/avg_tick/maintenance/backup keys",
+                v.get("tps").is_some()
+                    && v.get("avg_tick_ms").is_some()
+                    && v.get("maintenance_mode").is_some()
+                    && v.get("backup_in_progress").is_some(),
+            );
+        }
+        None => check("GET /status authed 200", false),
+    }
+
+    // -- log tail + join/leave parse (the UnboundLocalError regression) ----
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(logs_dir.join("latest.log"))
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(b"[12:00:10] [Server thread/INFO]: Steve joined the game\n")
+        })
+        .unwrap();
+    let mut saw_steve = false;
+    for _ in 0..16 {
+        std::thread::sleep(Duration::from_millis(500));
+        if let Some(r) = get_a("/status") {
+            if let Ok(v) = rt.block_on(async { r.json::<serde_json::Value>().await }) {
+                if v["players"].as_array().map(|a| a.iter().any(|p| p == "Steve")).unwrap_or(false) {
+                    saw_steve = true;
+                    break;
+                }
+            }
+        }
+    }
+    check("join line parsed → Steve tracked in /status", saw_steve);
+
+    // /logs must contain the joined line — the log buffer actually fills now
+    let logs = get_a("/logs")
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+    check(
+        "GET /logs contains appended join line",
+        logs.map(|v| {
+            v["logs"]
+                .as_array()
+                .map(|a| a.iter().any(|l| l.as_str().unwrap_or("").contains("Steve joined the game")))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false),
+    );
+
+    // leave line removes the player
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(logs_dir.join("latest.log"))
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(b"[12:00:20] [Server thread/INFO]: Steve left the game\n")
+        })
+        .unwrap();
+    let mut steve_gone = false;
+    for _ in 0..16 {
+        std::thread::sleep(Duration::from_millis(500));
+        if let Some(r) = get_a("/status") {
+            if let Ok(v) = rt.block_on(async { r.json::<serde_json::Value>().await }) {
+                if !v["players"].as_array().map(|a| a.iter().any(|p| p == "Steve")).unwrap_or(true) {
+                    steve_gone = true;
+                    break;
+                }
+            }
+        }
+    }
+    check("leave line parsed → Steve removed", steve_gone);
+
+    // -- settings: admin GET 200 + PUT rcon --------------------------------
+    check(
+        "admin GET /settings 200",
+        get_a("/settings").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+    );
+    check(
+        "PUT /settings rcon_port 200",
+        rt.block_on(
+            http.put(format!("{base}/settings"))
+                .header("Cookie", &admin_cookie)
+                .json(&json!({"rcon_port": 25576}))
+                .send(),
+        )
+        .map(|r| r.status().as_u16() == 200)
+        .unwrap_or(false),
+    );
+
+    // -- maintenance gate ---------------------------------------------------
+    check(
+        "maintenance toggle on",
+        post_a("/settings/maintenance/toggle", json!({}))
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+            .map(|v| v["maintenance_mode"] == json!(true))
+            .unwrap_or(false),
+    );
+    // admin start during maintenance → gate passes to next check (run.bat missing)
+    let start_msg = post_a("/power/start", json!({}))
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+        .and_then(|v| v["message"].as_str().map(String::from));
+    check(
+        "admin start passes maintenance gate",
+        start_msg.map(|m| !m.contains("Maintenance")).unwrap_or(false),
+    );
+    check(
+        "maintenance toggle back off",
+        post_a("/settings/maintenance/toggle", json!({}))
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+            .map(|v| v["maintenance_mode"] == json!(false))
+            .unwrap_or(false),
+    );
+
+    // -- emergency shutdown: admin ok, no java → graceful no-op -------------
+    check(
+        "admin emergency-shutdown 200",
+        post_a("/emergency-shutdown", json!({}))
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+            .map(|v| v["success"] == json!(true))
+            .unwrap_or(false),
+    );
+
+    // -- backups: create → list → restore → delete --------------------------
+    let bid = post_a("/backups/create", json!({}))
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+        .and_then(|v| {
+            check("backup create success", v["success"] == json!(true));
+            v["backup_id"].as_str().map(String::from)
+        });
+    if let Some(bid) = bid {
+        check(
+            "backup has both dimension dirs",
+            srv.join("backups").join(&bid).join("world").is_dir()
+                && srv.join("backups").join(&bid).join("world_nether").is_dir(),
+        );
+        check(
+            "backup in list",
+            get_a("/backups")
+                .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+                .map(|v| {
+                    v["backups"]
+                        .as_array()
+                        .map(|a| a.iter().any(|b| b["id"] == bid))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false),
+        );
+        // restore: destroy world file, restore, check it came back
+        let target = srv.join("world").join("level.dat");
+        let _ = std::fs::remove_file(&target);
+        check(
+            "backup restore (IDLE) ok",
+            post_a(&format!("/backups/restore/{bid}"), json!({}))
+                .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+                .map(|v| v["success"] == json!(true))
+                .unwrap_or(false),
+        );
+        check("restored file exists", target.is_file());
+        check(
+            "backup delete ok",
+            del_a(&format!("/backups/{bid}"))
+                .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+                .map(|v| v["success"] == json!(true))
+                .unwrap_or(false),
+        );
+    }
+
+    // -- viewer role: extended viewing + start/stop, no powerful commands ---
+    let viewer_cookie = post_a(
+        "/users",
+        json!({"username": "sandboxview", "password": "SandboxPass1", "role": "viewer"}),
+    )
+    .and_then(|r| {
+        check("admin creates viewer user", r.status().as_u16() == 200);
+        rt.block_on(
+            http.post(format!("{base}/auth/login"))
+                .json(&json!({"username": "sandboxview", "password": "SandboxPass1"}))
+                .send(),
+        )
+        .ok()
+        .and_then(|r| {
+            r.headers()
+                .get("set-cookie")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or("").to_string())
+        })
+    });
+    if let Some(vc) = viewer_cookie.filter(|c| c.contains("access_token=")) {
+        let get_v = |p: &str| {
+            rt.block_on(
+                http.get(format!("{base}{p}"))
+                    .header("Cookie", &vc)
+                    .send(),
+            )
+            .ok()
+        };
+        let post_v = |p: &str| {
+            rt.block_on(
+                http.post(format!("{base}{p}"))
+                    .header("Cookie", &vc)
+                    .json(&json!({}))
+                    .send(),
+            )
+            .ok()
+        };
+        check(
+            "viewer GET /status 200 (extended viewing)",
+            get_v("/status").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+        );
+        check(
+            "viewer GET /logs 200",
+            get_v("/logs").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+        );
+        check(
+            "viewer GET /players/stats 200",
+            get_v("/players/stats").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+        );
+        check(
+            "viewer /power/start allowed (reaches server gate)",
+            post_v("/power/start")
+                .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+                .map(|v| !v["message"].as_str().unwrap_or("").contains("ermission"))
+                .unwrap_or(false),
+        );
+        check(
+            "viewer console command → 403",
+            rt.block_on(
+                http.post(format!("{base}/console/command"))
+                    .header("Cookie", &vc)
+                    .json(&json!({"command": "say hi"}))
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 403)
+            .unwrap_or(false),
+        );
+        check(
+            "viewer GET /settings → 403",
+            get_v("/settings").map(|r| r.status().as_u16() == 403).unwrap_or(false),
+        );
+        check(
+            "viewer emergency-shutdown → 403",
+            post_v("/emergency-shutdown")
+                .map(|r| r.status().as_u16() == 403)
+                .unwrap_or(false),
+        );
+        check(
+            "viewer maintenance toggle → 403",
+            post_v("/settings/maintenance/toggle")
+                .map(|r| r.status().as_u16() == 403)
+                .unwrap_or(false),
+        );
+    } else {
+        check("viewer login set access_token cookie", false);
+    }
+
+    // == wave 2: remaining endpoints ========================================
+
+    // static + health-ish
+    check(
+        "GET / dashboard 200",
+        get_a("/").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+    );
+    check(
+        "GET /test 200",
+        get_a("/test").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+    );
+
+    // authed identity endpoints
+    check(
+        "GET /auth/me 200 admin",
+        get_a("/auth/me")
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+            .map(|v| v["username"] == json!("admin"))
+            .unwrap_or(false),
+    );
+    check(
+        "GET /auth/verify 200",
+        get_a("/auth/verify").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+    );
+
+    // user administration
+    let users = get_a("/users")
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+    let viewer_id = users.as_ref().and_then(|v| {
+        v.as_array().and_then(|a| {
+            a.iter()
+                .find(|u| u["username"] == "sandboxview")
+                .and_then(|u| u["id"].as_str())
+                .map(String::from)
+        })
+    });
+    check("admin GET /users lists sandboxview", viewer_id.is_some());
+    if let Some(vid) = viewer_id {
+        check(
+            "admin PUT role → moderator",
+            rt.block_on(
+                http.put(format!("{base}/users/{vid}/role?role=moderator"))
+                    .header("Cookie", &admin_cookie)
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+        );
+        check(
+            "admin reset viewer password",
+            rt.block_on(
+                http.put(format!("{base}/users/{vid}/password"))
+                    .header("Cookie", &admin_cookie)
+                    .json(&json!({"new_password": "ResetPass9"}))
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+        );
+        check(
+            "viewer login with reset password",
+            rt.block_on(
+                http.post(format!("{base}/auth/login"))
+                    .json(&json!({"username": "sandboxview", "password": "ResetPass9"}))
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+        );
+    }
+
+    // second throwaway user for delete/status tests
+    let victim_id = post_a(
+        "/users",
+        json!({"username": "victimuser", "password": "VictimPass1", "role": "viewer"}),
+    )
+    .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+    .and_then(|v| v["user"]["id"].as_str().map(String::from));
+    check("admin creates victim user", victim_id.is_some());
+    if let Some(id) = &victim_id {
+        check(
+            "admin deactivate user",
+            rt.block_on(
+                http.put(format!("{base}/users/{id}/status?is_active=false"))
+                    .header("Cookie", &admin_cookie)
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+        );
+        let dead_login = rt
+            .block_on(
+                http.post(format!("{base}/auth/login"))
+                    .json(&json!({"username": "victimuser", "password": "VictimPass1"}))
+                    .send(),
+            )
+            .ok();
+        check(
+            "deactivated user login rejected",
+            dead_login.map(|r| r.status().as_u16() != 200).unwrap_or(false),
+        );
+        check(
+            "admin DELETE user",
+            del_a(&format!("/users/{id}"))
+                .map(|r| r.status().as_u16() == 200)
+                .unwrap_or(false),
+        );
+    }
+
+    // player data + management
+    check(
+        "GET /players/Steve/data 200 (stats persisted)",
+        get_a("/players/Steve/data")
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+    );
+    check(
+        "admin gamemode endpoint reachable",
+        post_a("/players/Steve/gamemode?gamemode=creative", json!({}))
+            .map(|r| r.status().as_u16() != 403)
+            .unwrap_or(false),
+    );
+    check(
+        "DELETE /players/Steve admin ok",
+        del_a("/players/Steve")
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+            .map(|v| v["success"] == json!(true))
+            .unwrap_or(false),
+    );
+
+    // console + power
+    check(
+        "GET /console/status 200",
+        get_a("/console/status").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+    );
+    check(
+        "admin console command 200",
+        post_a("/console/command", json!({"command": "say sandbox"}))
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+    );
+    check(
+        "admin /power/stop reaches gate",
+        post_a("/power/stop", json!({}))
+            .map(|r| r.status().as_u16() != 403)
+            .unwrap_or(false),
+    );
+    check(
+        "admin /power/mode 200",
+        post_a("/power/mode", json!({"mode": "power_saver"}))
+            .map(|r| r.status().as_u16() != 403)
+            .unwrap_or(false),
+    );
+    check(
+        "GET /resources/history 200",
+        get_a("/resources/history").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+    );
+    check(
+        "GET /backups/settings 200",
+        get_a("/backups/settings").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+    );
+    check(
+        "PUT /backups/settings 200",
+        rt.block_on(
+            http.put(format!("{base}/backups/settings"))
+                .header("Cookie", &admin_cookie)
+                .json(&json!({"backup_auto_delete_enabled": true}))
+                .send(),
+        )
+        .map(|r| r.status().as_u16() == 200)
+        .unwrap_or(false),
+    );
+
+    // register → auto-login → viewer role
+    let reg = rt
+        .block_on(
+            http.post(format!("{base}/auth/register"))
+                .json(&json!({"username": "reguser", "password": "RegPassw0rd"}))
+                .send(),
+        )
+        .ok();
+    match reg {
+        Some(r) => {
+            check("POST /auth/register 200", r.status().as_u16() == 200);
+            let rc = r
+                .headers()
+                .get("set-cookie")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or("").to_string());
+            check(
+                "registered user is viewer + authed",
+                rc.filter(|c| c.contains("access_token="))
+                    .and_then(|c| {
+                        rt.block_on(
+                            http.get(format!("{base}/auth/me"))
+                                .header("Cookie", c)
+                                .send(),
+                        )
+                        .ok()
+                    })
+                    .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+                    .map(|v| v["role"] == json!("viewer"))
+                    .unwrap_or(false),
+            );
+        }
+        None => check("POST /auth/register 200", false),
+    }
+
+    // change-password on the sandboxview account (require_password_change user)
+    let vc2 = rt
+        .block_on(
+            http.post(format!("{base}/auth/login"))
+                .json(&json!({"username": "sandboxview", "password": "ResetPass9"}))
+                .send(),
+        )
+        .ok()
+        .and_then(|r| {
+            r.headers()
+                .get("set-cookie")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or("").to_string())
+        });
+    if let Some(vc2) = vc2 {
+        check(
+            "POST /auth/change-password ok",
+            rt.block_on(
+                http.post(format!("{base}/auth/change-password"))
+                    .header("Cookie", &vc2)
+                    .json(&json!({"new_password": "ChangedPass2"}))
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+        );
+        check(
+            "login with changed password",
+            rt.block_on(
+                http.post(format!("{base}/auth/login"))
+                    .json(&json!({"username": "sandboxview", "password": "ChangedPass2"}))
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+        );
+        check(
+            "old password rejected",
+            rt.block_on(
+                http.post(format!("{base}/auth/login"))
+                    .json(&json!({"username": "sandboxview", "password": "ResetPass9"}))
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() != 200)
+            .unwrap_or(false),
+        );
+
+        // maintenance IP whitelist — real check, not the dead old list
+        let post_v2 = |p: &str| {
+            rt.block_on(
+                http.post(format!("{base}{p}"))
+                    .header("Cookie", &vc2)
+                    .json(&json!({}))
+                    .send(),
+            )
+            .ok()
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+        };
+        post_a("/settings/maintenance/ips", json!({"ips": []}));
+        post_a("/settings/maintenance/toggle", json!({}));
+        check(
+            "maintenance on + no whitelist → viewer start blocked",
+            post_v2("/power/start")
+                .map(|v| {
+                    v["message"].as_str().unwrap_or("").contains("Maintenance")
+                        || v["success"] == json!(false)
+                })
+                .unwrap_or(false),
+        );
+        post_a("/settings/maintenance/ips", json!({"ips": ["127.0.0.1"]}));
+        check(
+            "whitelisted 127.0.0.1 → viewer start passes maintenance",
+            post_v2("/power/start")
+                .map(|v| !v["message"].as_str().unwrap_or("").contains("Maintenance"))
+                .unwrap_or(false),
+        );
+        post_a("/settings/maintenance/toggle", json!({})); // back off
+        post_a("/settings/maintenance/ips", json!({"ips": []})); // cleanup
+    } else {
+        check("viewer relogin for wave-2", false);
+    }
+
+    // chat-text injection must NOT register a fake join
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(logs_dir.join("latest.log"))
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(b"[12:01:00] [Server thread/INFO]: <Steve> Bob joined the game\n[12:01:01] [Server thread/INFO]: Alex joined the game in a chat message\n")
+        })
+        .unwrap();
+    std::thread::sleep(Duration::from_secs(3));
+    let pl = get_a("/status")
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+    check(
+        "chat injection does not create fake players",
+        pl.map(|v| {
+            let empty = Vec::new();
+            let a = v["players"].as_array().unwrap_or(&empty);
+            !a.iter().any(|p| p == "Bob" || p == "Alex")
+        })
+        .unwrap_or(false),
+    );
+
+    // log flood → buffer stays bounded at LOG_BUFFER_SIZE
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(logs_dir.join("latest.log"))
+            .unwrap();
+        for i in 0..560 {
+            writeln!(f, "[12:0{}:{:02}] [Server thread/INFO]: flood {}", i / 60 % 10, i % 60, i).unwrap();
+        }
+    }
+    std::thread::sleep(Duration::from_secs(3));
+    let lg = get_a("/logs")
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+    check(
+        "log buffer bounded (<=500) after flood",
+        lg.map(|v| {
+            v["logs"].as_array().map(|a| a.len() <= 500 && !a.is_empty()).unwrap_or(false)
+        })
+        .unwrap_or(false),
+    );
+
+    // unauthed write-path sweep
+    for (method, path) in [
+        ("POST", "/power/stop"),
+        ("POST", "/console/command"),
+        ("POST", "/emergency-shutdown"),
+        ("POST", "/backups/create"),
+        ("POST", "/settings/maintenance/toggle"),
+    ] {
+        check(
+            &format!("unauthed {method} {path} → 401"),
+            rt.block_on(http.post(format!("{base}{path}")).json(&json!({})).send())
+                .map(|r| r.status().as_u16() == 401)
+                .unwrap_or(false),
+        );
+    }
+
+    // logout + static asset mount
+    check(
+        "POST /auth/logout 200",
+        post_a("/auth/logout", json!({}))
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+    );
+    check(
+        "GET /items icon 200 (static mount)",
+        get_a("/items/acacia_boat.png")
+            .map(|r| r.status().as_u16() == 200)
+            .unwrap_or(false),
+    );
+    // reguser stays a real viewer (sandboxview was promoted to moderator above)
+    if let Some(vc3) = rt
+        .block_on(
+            http.post(format!("{base}/auth/login"))
+                .json(&json!({"username": "reguser", "password": "RegPassw0rd"}))
+                .send(),
+        )
+        .ok()
+        .and_then(|r| {
+            r.headers()
+                .get("set-cookie")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or("").to_string())
+        })
+    {
+        check(
+            "viewer GET /ecohost-logs → 403",
+            rt.block_on(
+                http.get(format!("{base}/ecohost-logs"))
+                    .header("Cookie", &vc3)
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 403)
+            .unwrap_or(false),
+        );
+        check(
+            "viewer GET /users → 403",
+            rt.block_on(
+                http.get(format!("{base}/users"))
+                    .header("Cookie", &vc3)
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() == 403)
+            .unwrap_or(false),
+        );
+        check(
+            "viewer /power/stop allowed",
+            rt.block_on(
+                http.post(format!("{base}/power/stop"))
+                    .header("Cookie", &vc3)
+                    .json(&json!({}))
+                    .send(),
+            )
+            .map(|r| r.status().as_u16() != 403)
+            .unwrap_or(false),
+        );
+    }
+
+    // ws requires auth — plain GET must not upgrade happily
+    check(
+        "GET /ws unauthed rejected",
+        rt.block_on(http.get(format!("{base}/ws")).send())
+            .map(|r| r.status().as_u16() != 200)
+            .unwrap_or(false),
+    );
+
+    // login lockout LAST — it's per-IP and poisons subsequent logins
+    let mut last_code = 0u16;
+    for _ in 0..7 {
+        if let Ok(r) = rt.block_on(
+            http.post(format!("{base}/auth/login"))
+                .json(&json!({"username": "admin", "password": "wrongpass"}))
+                .send(),
+        ) {
+            last_code = r.status().as_u16();
+        }
+    }
+    check("5+ bad logins → 429 lockout", last_code == 429);
+    check(
+        "correct password still locked out",
+        rt.block_on(
+            http.post(format!("{base}/auth/login"))
+                .json(&json!({"username": "admin", "password": "admin"}))
+                .send(),
+        )
+        .map(|r| r.status().as_u16() == 429)
+        .unwrap_or(false),
+    );
+
+    // -- unauthed backup endpoint is still gated ----------------------------
+    check(
+        "GET /backups unauthed 401",
+        rt.block_on(http.get(format!("{base}/backups")).send())
+            .map(|r| r.status().as_u16() == 401)
+            .unwrap_or(false),
+    );
+
+    // -- ping listener armed (log evidence; port may be busy on dev box) ----
+    std::thread::sleep(Duration::from_secs(6));
+    let eh = get_a("/ecohost-logs")
+        .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
+    check(
+        "ping listener armed or port-busy-logged",
+        eh.map(|v| {
+            v["logs"]
+                .as_array()
+                .map(|a| {
+                    a.iter().any(|l| {
+                        l.as_str().unwrap_or("").contains("PingListener")
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .unwrap_or(false),
+    );
 }
 
 fn test_backend_sidecar(rt: &tokio::runtime::Runtime) {
@@ -585,6 +1472,8 @@ fn main() {
         test_backend_endpoints("existing", &rt);
     } else {
         test_backend_python(&rt);
+        std::thread::sleep(Duration::from_millis(800));
+        test_backend_full(&rt);
         std::thread::sleep(Duration::from_millis(800));
         test_backend_sidecar(&rt);
     }

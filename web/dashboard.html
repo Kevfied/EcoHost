@@ -365,6 +365,13 @@
                 <span class="font-medium">Console</span>
             </div>
 
+            <div class="sidebar-item p-3 rounded-lg cursor-pointer flex items-center gap-3" data-page="protection">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                </svg>
+                <span class="font-medium">Protection</span>
+            </div>
+
             <div class="sidebar-item p-3 rounded-lg cursor-pointer flex items-center gap-3" data-page="settings">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -460,10 +467,63 @@
                                 <span>Total: <span id="total-uptime-quick">0h</span></span>
                                 <span class="mx-1">|</span>
                                 <span>Sessions: <span id="session-count-quick">0</span></span>
+                                <span class="mx-1">|</span>
+                                <span>TPS: <span id="tps-quick" class="text-slate-300">--</span></span>
+                                <span class="mx-1">|</span>
+                                <span>Avg Tick: <span id="avg-tick-quick" class="text-slate-300">--</span>ms</span>
                             </div>
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Maintenance Mode Notice -->
+            <div id="dashboard-maintenance-notice" class="hidden mb-6 p-4 bg-orange-900/30 border border-orange-500/30 rounded-xl">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-semibold text-orange-300">Maintenance Mode Active</h3>
+                        <p class="text-xs text-orange-400 mt-1">Only administrators can start the server during maintenance mode</p>
+                    </div>
+                    <div class="px-3 py-1 bg-orange-800/50 rounded-full">
+                        <span class="text-xs font-medium text-orange-300">MAINTENANCE</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Backup Progress Notice -->
+            <div id="dashboard-backup-notice" class="hidden mb-6 p-4 bg-yellow-900/30 border border-yellow-500/30 rounded-xl">
+                <div class="flex items-center justify-between">
+                    <div class="flex-1 mr-4">
+                        <h3 id="dashboard-backup-notice-title" class="text-sm font-semibold text-yellow-300">Backup in Progress</h3>
+                        <p id="dashboard-backup-notice-message" class="text-xs text-yellow-400 mt-1">Server is backing up...</p>
+                        <div class="w-full bg-slate-700 rounded-full h-2 mt-2">
+                            <div id="dashboard-backup-progress-bar" class="h-full bg-yellow-500 transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <p id="dashboard-backup-progress-text" class="text-xs text-yellow-400 mt-1">0%</p>
+                    </div>
+                    <div class="px-3 py-1 bg-yellow-800/50 rounded-full">
+                        <span class="text-xs font-medium text-yellow-300">BACKUP</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto-Shutdown Countdown -->
+            <div id="energy-countdown" class="hidden mb-6 p-4 bg-slate-800/50 border border-orange-500/20 rounded-xl">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm text-slate-400">Auto-shutdown in</span>
+                    <span id="countdown-value" class="text-sm font-bold text-orange-400">0s</span>
+                </div>
+                <div class="w-full bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                    <div id="countdown-bar" class="h-full bg-gradient-to-r from-orange-500 to-red-500 transition-all duration-1000" style="width: 100%"></div>
+                </div>
+            </div>
+
+            <!-- Emergency Shutdown (admin) -->
+            <div id="emergency-shutdown-wrap" class="hidden mb-6">
+                <button id="emergency-shutdown-button" onclick="emergencyShutdown()"
+                        class="w-full py-2.5 bg-red-900/30 hover:bg-red-900/50 border border-red-500/40 text-red-300 rounded-xl text-sm font-medium transition-colors">
+                    Emergency Shutdown — kills the server immediately
+                </button>
             </div>
 
             <!-- System Resources -->
@@ -805,6 +865,9 @@
                     <button id="player-ban-btn" class="flex-1 py-2 px-4 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded-lg transition-colors font-medium">
                         Ban Player
                     </button>
+                    <button id="player-delete-btn" class="flex-1 py-2 px-4 bg-slate-600/40 hover:bg-slate-600/60 text-slate-300 rounded-lg transition-colors font-medium" title="Remove stored stats">
+                        Delete Data
+                    </button>
                 </div>
             </div>
         </div>
@@ -930,6 +993,91 @@
             </div>
         </div>
 
+        <!-- Protection Page (Backups) — admin only -->
+        <div id="page-protection" class="page">
+            <div class="mb-6">
+                <h2 class="text-3xl font-bold text-white mb-2">Protection</h2>
+                <p class="text-slate-400">World backups and restore points</p>
+            </div>
+
+            <div id="protection-backup-notice" class="hidden mb-6 p-4 bg-yellow-900/30 border border-yellow-500/30 rounded-xl">
+                <div class="flex items-center justify-between">
+                    <div class="flex-1 mr-4">
+                        <h3 id="protection-backup-notice-title" class="text-sm font-semibold text-yellow-300">Backup in Progress</h3>
+                        <p id="protection-backup-notice-message" class="text-xs text-yellow-400 mt-1">Server is backing up...</p>
+                        <div class="w-full bg-slate-700 rounded-full h-2 mt-2">
+                            <div id="protection-backup-progress-bar" class="h-full bg-yellow-500 transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <p id="protection-backup-progress-text" class="text-xs text-yellow-400 mt-1">0%</p>
+                    </div>
+                    <div class="px-3 py-1 bg-yellow-800/50 rounded-full">
+                        <span class="text-xs font-medium text-yellow-300">BACKUP</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div class="glass-card rounded-2xl p-6">
+                    <h3 class="text-lg font-semibold text-slate-300 mb-4">Manual Backup</h3>
+                    <p class="text-sm text-slate-400 mb-4">Create an immediate backup of all world folders. While the server is running this uses RCON save-off so the copy is consistent.</p>
+                    <button id="manual-backup-btn" class="w-full bg-green-500 hover:bg-green-600 text-white px-4 py-3 rounded-lg font-medium transition-colors">
+                        Create Backup Now
+                    </button>
+                    <p id="manual-backup-status" class="text-xs text-slate-400 mt-3"></p>
+                </div>
+
+                <div class="glass-card rounded-2xl p-6">
+                    <h3 class="text-lg font-semibold text-slate-300 mb-4">Automatic Backups</h3>
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h4 class="text-sm font-medium text-white">Auto-backup</h4>
+                                <p class="text-xs text-slate-400 mt-0.5">Scheduled backups</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="auto-backup-toggle" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                            </label>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs text-slate-400">Every N hours</label>
+                                <input type="number" id="backup-duration-hours" min="0" max="720" value="24" class="mt-1 w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs text-slate-400">Max kept</label>
+                                <input type="number" id="backup-max-count" min="1" max="100" value="10" class="mt-1 w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h4 class="text-sm font-medium text-white">Auto-delete old</h4>
+                                <p class="text-xs text-slate-400 mt-0.5">Keep only the newest N</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="backup-autodelete-toggle" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                            </label>
+                        </div>
+                        <button id="save-backup-settings" class="w-full bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                            Save Backup Settings
+                        </button>
+                        <p class="text-xs text-slate-500">Next backup: <span id="next-backup-time">—</span></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-300">Backups</h3>
+                    <button id="refresh-backups-btn" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">Refresh</button>
+                </div>
+                <div id="backups-list" class="space-y-3">
+                    <p class="text-slate-500 text-sm">No backups yet.</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Settings Page -->
         <div id="page-settings" class="page">
             <div class="mb-6">
@@ -1033,6 +1181,26 @@
                             <span id="current-power-mode" class="text-sm font-medium text-green-400">Balanced</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- Maintenance Mode (Admin Only) -->
+                <div id="maintenance-section" class="hidden mt-6 p-4 bg-red-900/20 border border-red-500/30 rounded-xl">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <h3 class="text-sm font-medium text-red-300">Maintenance Mode</h3>
+                            <p class="text-xs text-red-400 mt-1">Block non-admin server starts</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="maintenance-mode-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-red-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
+                        </label>
+                    </div>
+                    <p class="text-xs text-red-400 mb-2">IPs that may still start the server during maintenance (one per line)</p>
+                    <textarea id="maintenance-ips" rows="3" placeholder="192.168.1.100&#10;10.0.0.5&#10;127.0.0.1"
+                              class="w-full bg-red-900/30 border border-red-600/40 rounded-lg px-3 py-2 text-red-100 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-red-400/60"></textarea>
+                    <button id="save-maintenance-ips" class="mt-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
+                        Save IPs
+                    </button>
                 </div>
 
                 <!-- User Management (Admin Only) -->
@@ -1142,8 +1310,8 @@
         const rolePermissions = {
             [userRoles.ADMIN]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'change_settings', 'user_management', 'power_mode_control', 'player_management'],
             [userRoles.MODERATOR]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'player_management'],
-            [userRoles.VIEWER_PLUS]: ['server_start', 'view_dashboard', 'view_players', 'view_server_logs'],
-            [userRoles.VIEWER]: ['view_dashboard', 'view_players', 'view_server_logs']
+            [userRoles.VIEWER_PLUS]: ['server_start', 'server_stop', 'view_dashboard', 'view_players', 'view_server_logs'],
+            [userRoles.VIEWER]: ['server_start', 'server_stop', 'view_dashboard', 'view_players', 'view_server_logs']
         };
 
         function hasPermission(permission) {
@@ -1296,6 +1464,24 @@
                     loadUsers();
                 }
             }
+
+            // Protection page — admin only
+            if (!isAdmin()) {
+                const protectionNav = document.querySelector('[data-page="protection"]');
+                if (protectionNav) protectionNav.style.display = 'none';
+            }
+
+            // Maintenance section on Settings — admin only
+            if (isAdmin()) {
+                const maintSection = document.getElementById('maintenance-section');
+                if (maintSection) maintSection.classList.remove('hidden');
+            }
+
+            // Emergency shutdown button — admin only
+            if (isAdmin()) {
+                const emergencyWrap = document.getElementById('emergency-shutdown-wrap');
+                if (emergencyWrap) emergencyWrap.classList.remove('hidden');
+            }
         }
 
         // Logout functionality
@@ -1350,6 +1536,9 @@
                     fetchPlayerStats();
                 } else if (page === 'resources') {
                     fetchResourceHistory();
+                } else if (page === 'protection') {
+                    fetchBackups();
+                    loadBackupSettings();
                 }
             });
         });
@@ -1472,6 +1661,48 @@
                      data.current_power_mode === 'high_performance' ? 'text-green-400' : 
                      data.current_power_mode === 'power_saver' ? 'text-yellow-400' : 'text-blue-400');
             }
+
+            // TPS quick stats
+            const tpsEl = document.getElementById('tps-quick');
+            if (tpsEl) tpsEl.textContent = data.tps != null ? data.tps.toFixed(1) : '--';
+            const tickEl = document.getElementById('avg-tick-quick');
+            if (tickEl) tickEl.textContent = data.avg_tick_ms != null ? data.avg_tick_ms.toFixed(0) : '--';
+
+            // Auto-shutdown countdown
+            const countdownEl = document.getElementById('energy-countdown');
+            if (countdownEl) {
+                if (data.countdown_active && data.countdown_remaining > 0) {
+                    countdownEl.classList.remove('hidden');
+                    document.getElementById('countdown-value').textContent = `${data.countdown_remaining}s`;
+                    const pct = data.countdown_total > 0 ? (data.countdown_remaining / data.countdown_total) * 100 : 0;
+                    document.getElementById('countdown-bar').style.width = `${pct}%`;
+                } else {
+                    countdownEl.classList.add('hidden');
+                }
+            }
+
+            // Maintenance mode banner + toggle sync
+            const maintNotice = document.getElementById('dashboard-maintenance-notice');
+            if (maintNotice) maintNotice.classList.toggle('hidden', !data.maintenance_mode);
+            const maintToggle = document.getElementById('maintenance-mode-toggle');
+            if (maintToggle) maintToggle.checked = !!data.maintenance_mode;
+
+            // Backup progress banners (dashboard + protection page share state)
+            const showBackup = !!data.backup_in_progress;
+            [['dashboard', 'BACKUP'], ['protection', data.backup_operation === 'restore' ? 'RESTORE' : 'BACKUP']].forEach(([pfx, label]) => {
+                const notice = document.getElementById(`${pfx}-backup-notice`);
+                if (!notice) return;
+                notice.classList.toggle('hidden', !showBackup);
+                if (showBackup) {
+                    const pct = Math.round((data.backup_progress || 0) * 100);
+                    document.getElementById(`${pfx}-backup-progress-bar`).style.width = `${pct}%`;
+                    document.getElementById(`${pfx}-backup-progress-text`).textContent = `${pct}%`;
+                    const title = document.getElementById(`${pfx}-backup-notice-title`);
+                    if (title) title.textContent = `${label} in Progress`;
+                    const msg = document.getElementById(`${pfx}-backup-notice-message`);
+                    if (msg) msg.textContent = data.backup_status_message || 'Working...';
+                }
+            });
         }
 
         // Power button handler
@@ -2643,6 +2874,223 @@
         // Start history refresh when page loads
         startPlayerHistoryRefresh();
 
+        // =================================================================
+        // Emergency Shutdown (admin)
+        // =================================================================
+        async function emergencyShutdown() {
+            if (!confirm('EMERGENCY SHUTDOWN\n\nThis sends a graceful stop, then force-kills the server process if it is still alive after ~15s. World corruption is possible.\n\nContinue?')) {
+                return;
+            }
+            const btn = document.getElementById('emergency-shutdown-button');
+            btn.disabled = true;
+            btn.textContent = 'Shutting down...';
+            try {
+                const response = await fetch('/emergency-shutdown', {
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+                if (data.success) {
+                    alert('Emergency shutdown issued');
+                } else {
+                    alert(`Emergency shutdown failed: ${data.message || 'unknown error'}`);
+                }
+            } catch (e) {
+                alert(`Emergency shutdown request failed: ${e}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Emergency Shutdown — kills the server immediately';
+            }
+        }
+
+        // =================================================================
+        // Maintenance Mode (admin)
+        // =================================================================
+        document.getElementById('maintenance-mode-toggle')?.addEventListener('change', async () => {
+            try {
+                const response = await fetch('/settings/maintenance/toggle', {
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    alert('Failed to toggle maintenance mode');
+                }
+            } catch (e) {
+                alert(`Maintenance toggle failed: ${e}`);
+            }
+        });
+
+        document.getElementById('save-maintenance-ips')?.addEventListener('click', async () => {
+            const ips = document.getElementById('maintenance-ips').value
+                .split('\n').map(s => s.trim()).filter(Boolean);
+            try {
+                const response = await fetch('/settings/maintenance/ips', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ips })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    const el = document.getElementById('save-maintenance-ips');
+                    el.textContent = 'Saved!';
+                    setTimeout(() => { el.textContent = 'Save IPs'; }, 1500);
+                } else {
+                    alert('Failed to save maintenance IPs');
+                }
+            } catch (e) {
+                alert(`Save failed: ${e}`);
+            }
+        });
+
+        // =================================================================
+        // Backups (admin — Protection page)
+        // =================================================================
+        async function fetchBackups() {
+            const list = document.getElementById('backups-list');
+            try {
+                const response = await fetch('/backups', { credentials: 'same-origin' });
+                const data = await response.json();
+                const backups = data.backups || [];
+                if (!backups.length) {
+                    list.innerHTML = '<p class="text-slate-500 text-sm">No backups yet.</p>';
+                    return;
+                }
+                backups.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                list.innerHTML = backups.map(b => `
+                    <div class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg">
+                        <div class="min-w-0">
+                            <p class="text-sm font-medium text-white truncate">${escapeHtml(b.id)}${b.is_safety_backup ? ' <span class="text-xs text-yellow-400">(safety)</span>' : ''}</p>
+                            <p class="text-xs text-slate-400">${b.timestamp ? new Date(b.timestamp * 1000).toLocaleString() : ''} — ${escapeHtml(b.size_human || '')}</p>
+                            <p class="text-xs text-slate-500 truncate">${escapeHtml(b.description || '')}</p>
+                        </div>
+                        <div class="flex gap-2 shrink-0 ml-3">
+                            <button onclick="restoreBackup('${b.id}')" class="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded text-xs transition-colors">Restore</button>
+                            <button onclick="deleteBackup('${b.id}')" class="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded text-xs transition-colors">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                list.innerHTML = `<p class="text-red-400 text-sm">Failed to load backups: ${e}</p>`;
+            }
+        }
+
+        async function loadBackupSettings() {
+            try {
+                const response = await fetch('/backups/settings', { credentials: 'same-origin' });
+                const data = await response.json();
+                if (!data.success) return;
+                document.getElementById('auto-backup-toggle').checked = !!data.backup_auto_enabled;
+                document.getElementById('backup-autodelete-toggle').checked = !!data.backup_auto_delete_enabled;
+                document.getElementById('backup-duration-hours').value = data.backup_duration_hours ?? 24;
+                document.getElementById('backup-max-count').value = data.backup_max_count ?? 10;
+                const next = document.getElementById('next-backup-time');
+                if (data.backup_auto_enabled && data.backup_last_run) {
+                    const nextTs = data.backup_last_run + (data.backup_duration_hours || 24) * 3600;
+                    next.textContent = new Date(nextTs * 1000).toLocaleString();
+                } else {
+                    next.textContent = data.backup_auto_enabled ? 'pending first run' : '—';
+                }
+            } catch (e) { /* page hidden for non-admins anyway */ }
+        }
+
+        document.getElementById('manual-backup-btn')?.addEventListener('click', async () => {
+            const btn = document.getElementById('manual-backup-btn');
+            const status = document.getElementById('manual-backup-status');
+            btn.disabled = true;
+            status.textContent = 'Starting backup...';
+            try {
+                const response = await fetch('/backups/create', {
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+                status.textContent = data.success ? `Done: ${data.backup_id}` : `Failed: ${data.error || data.message}`;
+                if (data.success) fetchBackups();
+            } catch (e) {
+                status.textContent = `Failed: ${e}`;
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        document.getElementById('save-backup-settings')?.addEventListener('click', async () => {
+            const body = {
+                backup_auto_enabled: document.getElementById('auto-backup-toggle').checked,
+                backup_auto_delete_enabled: document.getElementById('backup-autodelete-toggle').checked,
+                backup_duration_hours: parseInt(document.getElementById('backup-duration-hours').value, 10) || 24,
+                backup_max_count: parseInt(document.getElementById('backup-max-count').value, 10) || 10,
+            };
+            try {
+                const response = await fetch('/backups/settings', {
+                    method: 'PUT',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await response.json();
+                const btn = document.getElementById('save-backup-settings');
+                btn.textContent = data.success ? 'Saved!' : 'Failed';
+                setTimeout(() => { btn.textContent = 'Save Backup Settings'; }, 1500);
+            } catch (e) {
+                alert(`Save failed: ${e}`);
+            }
+        });
+
+        document.getElementById('refresh-backups-btn')?.addEventListener('click', fetchBackups);
+
+        async function restoreBackup(id) {
+            if (!confirm(`Restore "${id}"?\n\nCurrent world folders will be replaced (a safety copy is made first). The server must be stopped.`)) return;
+            try {
+                const response = await fetch(`/backups/restore/${id}`, {
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+                alert(data.success ? 'Restore complete' : `Restore failed: ${data.error || data.message}`);
+                fetchBackups();
+            } catch (e) {
+                alert(`Restore failed: ${e}`);
+            }
+        }
+
+        async function deleteBackup(id) {
+            if (!confirm(`Delete backup "${id}"? This cannot be undone.`)) return;
+            try {
+                const response = await fetch(`/backups/${id}`, {
+                    method: 'DELETE',
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+                if (!data.success) alert(`Delete failed: ${data.error || data.message}`);
+                fetchBackups();
+            } catch (e) {
+                alert(`Delete failed: ${e}`);
+            }
+        }
+
+        // Player data deletion (player_management)
+        document.getElementById('player-delete-btn')?.addEventListener('click', async () => {
+            if (!currentPlayerModal?.username) return;
+            if (!confirm(`Delete all stored data for ${currentPlayerModal.username}? (does not kick/ban them)`)) return;
+            try {
+                const response = await fetch(`/players/${encodeURIComponent(currentPlayerModal.username)}`, {
+                    method: 'DELETE',
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('close-player-modal').click();
+                    fetchPlayerStats();
+                } else {
+                    alert(data.message || 'Delete failed');
+                }
+            } catch (e) {
+                alert(`Delete failed: ${e}`);
+            }
+        });
+
         // WebSocket connection
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2958,6 +3406,7 @@
         async function loadSettings() {
             try {
                 const response = await fetch('/settings');
+                if (!response.ok) return; // settings are admin-only now — leave UI at defaults
                 const data = await response.json();
                 
                 autoShutdownToggle.checked = data.auto_shutdown_enabled;
@@ -2984,6 +3433,14 @@
                 
                 // Update manual power mode dropdown to match current power mode
                 manualPowerMode.value = data.current_power_mode || 'balanced';
+
+                // Maintenance mode fields (admin)
+                const maintToggle = document.getElementById('maintenance-mode-toggle');
+                if (maintToggle) maintToggle.checked = !!data.maintenance_mode;
+                const maintIps = document.getElementById('maintenance-ips');
+                if (maintIps && Array.isArray(data.maintenance_ips)) {
+                    maintIps.value = data.maintenance_ips.join('\n');
+                }
             } catch (e) {
                 console.error('Failed to load settings:', e);
             }

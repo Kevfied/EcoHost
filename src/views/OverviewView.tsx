@@ -61,21 +61,12 @@ export default function OverviewView({ ov }: { ov: Overview | null }) {
         <div className="row">
           <span className="k">players online</span>
           <span className="fill" />
-          <span className="v">
-            {ps ? `${ps.players_online}${ps.players.length ? ` — ${ps.players.join(", ")}` : ""}` : "—"}
-          </span>
+          <span className="v">{ps ? ps.players_online : "—"}</span>
         </div>
         <div className="row">
           <span className="k">server uptime</span>
           <span className="fill" />
           <span className="v dim">{ps ? formatDuration(ps.mc_uptime_seconds) : "—"}</span>
-        </div>
-        <div className="row">
-          <span className="k">cpu / ram</span>
-          <span className="fill" />
-          <span className="v dim">
-            {ps ? `${ps.cpu_usage.toFixed(0)}% / ${ps.ram_usage.toFixed(0)}%` : "—"}
-          </span>
         </div>
         <div className="row">
           <span className="k">power mode</span>

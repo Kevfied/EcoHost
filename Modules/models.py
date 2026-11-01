@@ -41,6 +41,14 @@ class ServerStatus:
     ram_usage: float = 0.0
     uptime: float = 0.0
     last_player_time: float = field(default_factory=time.time)
+    # Backup/restore progress broadcast over /ws
+    backup_in_progress: bool = False
+    backup_operation: Optional[str] = None  # "backup" or "restore"
+    backup_progress: float = 0.0  # 0.0 to 1.0
+    backup_status_message: str = ""
+    # TPS monitoring (populated via RCON when available)
+    tps: Optional[float] = None
+    avg_tick_ms: Optional[float] = None
 
 
 @dataclass
@@ -58,6 +66,19 @@ class Settings:
     rcon_enabled: bool = False
     rcon_port: int = 25575
     rcon_password: str = ""  # Set via /settings or data/config.json - never hardcode secrets
+
+    # Maintenance Mode
+    maintenance_mode: bool = False
+    maintenance_ips: list = field(default_factory=list)  # IPs allowed to start during maintenance
+
+    # Backup Settings
+    backup_enabled: bool = True
+    backup_auto_enabled: bool = False
+    backup_duration_hours: int = 24
+    backup_duration_days: int = 0
+    backup_max_count: int = 10
+    backup_auto_delete_enabled: bool = True
+    backup_last_run: Optional[float] = None
 
 
 # =============================================================================
@@ -164,6 +185,10 @@ class StatusResponse(BaseModel):
     network: dict
     console_link: str
     server_hung: bool  # True if stop sent but server still running after 60s
+    tps: Optional[float] = None
+    avg_tick_ms: Optional[float] = None
+    maintenance_mode: bool = False
+    backup_in_progress: bool = False
 
 
 class LogsResponse(BaseModel):
@@ -191,6 +216,13 @@ class SettingsResponse(BaseModel):
     rcon_enabled: bool
     rcon_port: int
     rcon_password: str
+    maintenance_mode: bool = False
+    backup_enabled: bool = True
+    backup_auto_enabled: bool = False
+    backup_duration_hours: int = 24
+    backup_duration_days: int = 0
+    backup_max_count: int = 10
+    backup_auto_delete_enabled: bool = True
 
 
 class MetricsHistoryResponse(BaseModel):

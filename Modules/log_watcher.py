@@ -32,15 +32,24 @@ def is_port_open(host: str, port: int) -> bool:
         return False
 
 
+# MC usernames are [A-Za-z0-9_]{3,16}; anchored after "]:" AND at end-of-line
+# so chat text ("<Player> X joined the game" or "X joined the game lol") can
+# never inject a fake join/leave event. "lost connection"/"disconnected" are
+# left unanchored because vanilla appends ": <reason>" after them.
+_JOIN_PATTERNS = [
+    r"\]:\s*([\w.]{1,16}) joined the game\s*$",
+    r"\]:\s*([\w.]{1,16})\[/?[\w.:\-]+\] logged in\s*$",  # modded: "Steve[/ip:port] logged in"
+]
+_LEFT_PATTERNS = [
+    r"\]:\s*([\w.]{1,16}) left the game\s*$",
+    r"\]:\s*([\w.]{1,16}) lost connection",
+    r"\]:\s*([\w.]{1,16}) disconnected\s*$",
+]
+
+
 def parse_player_joined(line: str) -> Optional[str]:
     """Parse player join from log line."""
-    patterns = [
-        r"<([^>]+)> joined the game",
-        r"(\S+) joined the game",
-        r"joined the game.*?: (\S+)",
-        r"(\S+) has joined",
-    ]
-    for pattern in patterns:
+    for pattern in _JOIN_PATTERNS:
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
             username = match.group(1)
@@ -52,11 +61,7 @@ def parse_player_joined(line: str) -> Optional[str]:
 
 def parse_player_left(line: str) -> Optional[str]:
     """Parse player leave from log line."""
-    patterns = [
-        r"<([^>]+)> left the game",
-        r"([\w.]+) left the game",
-    ]
-    for pattern in patterns:
+    for pattern in _LEFT_PATTERNS:
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
             username = match.group(1)
@@ -370,7 +375,8 @@ def log_watcher():
                         with log_lock:
                             log_lines.append(line)
                             if len(log_lines) > LOG_BUFFER_SIZE:
-                                log_lines = log_lines[-LOG_BUFFER_SIZE:]
+                                # In-place trim: keep models.log_lines as the shared buffer
+                                del log_lines[:-LOG_BUFFER_SIZE]
                         
                         if player := parse_player_joined(line):
                             if not any(p.username == player for p in server_status.players):
@@ -390,6 +396,14 @@ def log_watcher():
             # Update power modes based on schedule and player count
             update_ecohost_precision_mode()
             update_power_mode_scheduling()
+
+            # Wake-listener: holds the MC port while IDLE, releases on any
+            # real activity (respects maintenance mode internally)
+            try:
+                from . import ping_listener
+                ping_listener.sync()
+            except Exception as e:
+                logger.debug(f"[PingListener] sync failed: {e}")
             
             if server_status.state == ServerState.ACTIVE and not config.server_hung and app_settings.auto_shutdown_enabled:
                 if len(server_status.players) == 0:

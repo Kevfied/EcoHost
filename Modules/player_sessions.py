@@ -227,6 +227,17 @@ def record_player_leave(username: str):
     save_player_stats()
 
 
+def delete_player_stats(username: str) -> bool:
+    """Delete a player's stored statistics. Returns True if a record existed."""
+    global player_sessions
+    if username in player_sessions:
+        del player_sessions[username]
+        save_player_stats()
+        logger.info(f"[PlayerStats] Deleted stats for {username}")
+        return True
+    return False
+
+
 def periodic_save():
     """Save stats periodically every 5 minutes."""
     while True:

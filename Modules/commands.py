@@ -235,3 +235,56 @@ async def stop_server() -> bool:
 async def execute_console_command(command: str) -> bool:
     """Alias for execute_command - maintains backward compatibility."""
     return await execute_command(command)
+
+
+# =============================================================================
+# TPS Monitoring
+# =============================================================================
+
+_tps_cache: tuple = (0.0, None)  # (fetched_at, tps_value)
+_TPS_CACHE_TTL = 8.0  # seconds — status/WS polls must not hammer RCON
+
+
+def _parse_tps(response: str) -> Optional[float]:
+    """Parse TPS out of server-specific response formats.
+
+    Paper/Purpur: "TPS from last 1m, 5m, 15m: 20.0, 20.0, 19.9"
+    Vanilla/spigot-ish: similar numeric lists. Take the first number.
+    """
+    import re
+    match = re.search(r"(\d+(?:\.\d+)?)", response or "")
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+        return value if 0 < value <= 20.5 else None
+    except ValueError:
+        return None
+
+
+async def get_server_tps() -> Optional[float]:
+    """Get real server TPS via RCON, cached for ~8s.
+
+    Runs the blocking mcrcon call in a thread (never asyncio.run() inside
+    a running loop). Returns None when the server isn't ACTIVE, RCON is
+    off, or the server type doesn't answer `tps`.
+    """
+    global _tps_cache
+    import time as _time
+
+    if server_status.state != ServerState.ACTIVE or not is_rcon_available():
+        return None
+
+    now = _time.time()
+    if now - _tps_cache[0] < _TPS_CACHE_TTL:
+        return _tps_cache[1]
+
+    try:
+        response = await asyncio.to_thread(send_rcon_command, "tps")
+        tps = _parse_tps(response)
+        _tps_cache = (now, tps)
+        return tps
+    except Exception as e:
+        logger.debug(f"[TPS] Query failed: {e}")
+        _tps_cache = (now, None)
+        return None

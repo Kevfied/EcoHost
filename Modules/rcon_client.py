@@ -74,7 +74,8 @@ class RCONClient:
                 else:
                     logger.debug(f"[RCON] Response: {response[:200]}... (truncated)")
             else:
-                logger.warning(f"[RCON] Empty response received")
+                # Many commands legitimately return nothing (say, stop, kick)
+                logger.debug(f"[RCON] Empty response received")
             return response
         except Exception as e:
             logger.error(f"[RCON] Failed to send command '{command}': {e}")
@@ -120,6 +121,22 @@ def test_rcon_connection() -> bool:
         return response is not None
     except Exception:
         return False
+
+
+def reset_rcon_client() -> None:
+    """Drop the cached client so the next command reconnects with current settings.
+
+    Must be called whenever rcon_port/rcon_password/rcon_enabled change,
+    otherwise the singleton keeps using stale credentials forever.
+    """
+    global _rcon_client
+    if _rcon_client is not None:
+        try:
+            _rcon_client.disconnect()
+        except Exception:
+            pass
+        _rcon_client = None
+        logger.info("[RCON] Client reset - will reconnect with updated settings")
 
 
 def is_rcon_available() -> bool:

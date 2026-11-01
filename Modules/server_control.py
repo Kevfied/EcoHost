@@ -27,42 +27,56 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def is_minecraft_process_running() -> bool:
-    """Check if a Minecraft Java process is currently running."""
+def find_mc_java_proc():
+    """Find OUR Minecraft server's java process, or None.
+
+    Scoped to SERVER_DIR: a java process only counts when its working
+    directory or command line references the configured server directory,
+    so unrelated java applications (and other MC servers) are never
+    adopted or killed by mistake. Returns the psutil.Process so callers
+    can also read create_time() / kill it.
+    """
     try:
         import psutil
+    except ImportError:
+        return None
+
+    server_dir_str = str(SERVER_DIR).lower().rstrip("\\/")
+    minecraft_server_indicators = [
+        'server.jar', 'minecraft_server', 'nogui', 'paper', 'purpur',
+        'spigot', 'bukkit', 'forge', 'fabric',
+    ]
+    try:
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                name = proc.info.get('name', '').lower()
-                cmdline = proc.info.get('cmdline', []) or []
-                cmdline_str = ' '.join(cmdline).lower()
-
+                name = (proc.info.get('name') or '').lower()
                 # Skip client-side java (javaw) and non-java processes
                 if 'java' not in name or 'javaw' in name:
                     continue
+                cmdline_str = ' '.join(proc.info.get('cmdline') or []).lower()
+                if not any(i in cmdline_str for i in minecraft_server_indicators):
+                    continue
 
-                # Look for dedicated-server indicators in the command line.
-                # Deliberately excludes generic '-jar'/'minecraft' which match
-                # the game client and unrelated java applications.
-                minecraft_server_indicators = [
-                    'server.jar',
-                    'minecraft_server',
-                    'nogui',
-                    'paper',
-                    'purpur',
-                    'spigot',
-                    'bukkit',
-                    'forge',
-                    'fabric',
-                ]
-                if any(indicator in cmdline_str for indicator in minecraft_server_indicators):
-                    return True
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                # Scope: cwd match first (covers `java -jar server.jar` run
+                # from the server dir), then absolute path in cmdline.
+                try:
+                    if proc.cwd().lower().rstrip("\\/") == server_dir_str:
+                        return proc
+                except Exception:
+                    pass
+                if server_dir_str in cmdline_str:
+                    return proc
+            except Exception:
                 continue
-        return False
+        return None
     except Exception as e:
-        logger.error(f"Failed to check Minecraft process: {e}")
-        return False
+        logger.error(f"Failed to find Minecraft process: {e}")
+        return None
+
+
+def is_minecraft_process_running() -> bool:
+    """Check if our Minecraft Java process is currently running."""
+    return find_mc_java_proc() is not None
 
 
 class GhostConsoleController:
@@ -86,7 +100,10 @@ class GhostConsoleController:
             
             for window in windows:
                 try:
-                    if window.window_text() == self.window_title:
+                    title = window.window_text()
+                    # Windows prepends "Administrator: " to elevated consoles
+                    normalized = title.removeprefix("Administrator: ").strip()
+                    if normalized == self.window_title or normalized.endswith(self.window_title):
                         return window
                 except Exception:
                     continue

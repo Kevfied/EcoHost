@@ -137,11 +137,14 @@ PERMISSIONS = {
     },
     UserRole.VIEWER_PLUS: {
         "server_start",
+        "server_stop",
         "view_dashboard",
         "view_players",
         "view_server_logs",
     },
     UserRole.VIEWER: {
+        "server_start",
+        "server_stop",
         "view_dashboard",
         "view_players",
         "view_server_logs",

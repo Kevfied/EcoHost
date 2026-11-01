@@ -49,7 +49,7 @@ from Modules.models import (
     PlayerDataResponse
 )
 from Modules.server_control import console_controller, is_minecraft_process_running
-from Modules.log_watcher import start_log_watcher, update_ecohost_precision_mode
+from Modules.log_watcher import start_log_watcher, update_ecohost_precision_mode, scan_for_existing_players
 from Modules.resource_monitor import get_system_resources
 from Modules.player_sessions import (
     player_sessions, server_uptime_stats, PlayerSession,
@@ -197,32 +197,58 @@ def get_network_status() -> dict[str, bool]:
     return status
 
 
+def _recover_server_start_time() -> float:
+    """Recover the real boot time of an already-running server.
+
+    Uses the java process create_time; falls back to latest.log's
+    modification time (close enough for uptime display) when the process
+    isn't visible. Never returns 0 — callers still see a sane uptime.
+    """
+    try:
+        from Modules.server_control import find_mc_java_proc
+        proc = find_mc_java_proc()
+        if proc is not None:
+            return proc.create_time()
+    except Exception:
+        pass
+    try:
+        if LOG_FILE.exists():
+            return LOG_FILE.stat().st_mtime
+    except Exception:
+        pass
+    return time.time()
+
+
 def attach_to_existing_server() -> bool:
     """Detect and attach to an already-running Minecraft server by window or Java."""
+    attached = False
+
     if PYWINAUTO_AVAILABLE and console_controller.is_console_running():
         logger.info(f"[GhostConsole] Found existing console window '{CONSOLE_WINDOW_TITLE}'")
-        mc_models.start_time = time.time()
-
-        port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
-        if port_open:
-            logger.info("[GhostConsole] Server port open - marking as ACTIVE")
-            server_status.state = ServerState.ACTIVE
-        else:
-            logger.info("[GhostConsole] Server port closed - marking as STARTING")
-            server_status.state = ServerState.STARTING
-        return True
-
-    if is_minecraft_process_running():
+        attached = True
+    elif is_minecraft_process_running():
         logger.info("[GhostConsole] Found Java process without window, attaching...")
-        mc_models.start_time = time.time()
+        attached = True
 
-        port_open = is_port_open("127.0.0.1", MINECRAFT_PORT)
-        if port_open:
-            server_status.state = ServerState.ACTIVE
-        else:
-            server_status.state = ServerState.STARTING
-        return True
-    return False
+    if not attached:
+        return False
+
+    mc_models.start_time = _recover_server_start_time()
+
+    if is_port_open("127.0.0.1", MINECRAFT_PORT):
+        logger.info("[GhostConsole] Server port open - marking as ACTIVE")
+        server_status.state = ServerState.ACTIVE
+    else:
+        logger.info("[GhostConsole] Server port closed - marking as STARTING")
+        server_status.state = ServerState.STARTING
+
+    # Repopulate the players list from latest.log — without this the
+    # auto-shutdown countdown would fire on a populated server.
+    try:
+        scan_for_existing_players()
+    except Exception as e:
+        logger.warning(f"[GhostConsole] Player rescan failed on attach: {e}")
+    return True
 
 
 @asynccontextmanager
@@ -238,11 +264,24 @@ async def lifespan(app: FastAPI):
     app_settings.current_power_mode = get_current_power_mode()
     
     attach_to_existing_server()
-    
+
     start_log_watcher()
+
+    # Auto-backup scheduler (runs only when backup_auto_enabled)
+    try:
+        from Modules.backup_manager import start_auto_backup_scheduler
+        start_auto_backup_scheduler()
+    except Exception as e:
+        logger.warning(f"[Backup] Scheduler start failed: {e}")
+
     logger.info("MC-EcoHost ready")
     yield
     logger.info("MC-EcoHost shutting down...")
+    try:
+        from Modules.backup_manager import stop_auto_backup_scheduler
+        stop_auto_backup_scheduler()
+    except Exception:
+        pass
 
 
 # =============================================================================
@@ -295,6 +334,18 @@ class SettingsUpdate(BaseModel):
     rcon_enabled: Optional[bool] = None
     rcon_port: Optional[int] = None
     rcon_password: Optional[str] = None
+    maintenance_mode: Optional[bool] = None
+    maintenance_ips: Optional[list] = None
+    backup_enabled: Optional[bool] = None
+    backup_auto_enabled: Optional[bool] = None
+    backup_duration_hours: Optional[int] = None
+    backup_duration_days: Optional[int] = None
+    backup_max_count: Optional[int] = None
+    backup_auto_delete_enabled: Optional[bool] = None
+
+
+class MaintenanceIpsRequest(BaseModel):
+    ips: list
 
 
 # =============================================================================
@@ -781,13 +832,25 @@ async def get_status(current_user: User = require_auth()):
     server_status.ram_usage = ram
 
     if server_status.state == ServerState.ACTIVE:
-        server_status.uptime = time.time() - mc_models.start_time
+        server_status.uptime = (time.time() - mc_models.start_time) if mc_models.start_time else 0
         if server_status.players:
             server_status.last_player_time = time.time()
 
+        # TPS via cached RCON query (None when RCON off / unsupported)
+        try:
+            from Modules.commands import get_server_tps
+            server_status.tps = await get_server_tps()
+            server_status.avg_tick_ms = (1000.0 / server_status.tps) if server_status.tps else None
+        except Exception:
+            server_status.tps = None
+            server_status.avg_tick_ms = None
+    else:
+        server_status.tps = None
+        server_status.avg_tick_ms = None
+
     # Check console link status
     console_link = "connected" if console_controller.is_console_running() else "disconnected"
-    
+
     # Get network status
     network = get_network_status()
 
@@ -802,6 +865,10 @@ async def get_status(current_user: User = require_auth()):
         network=network,
         console_link=console_link,
         server_hung=mc_config.server_hung,
+        tps=server_status.tps,
+        avg_tick_ms=server_status.avg_tick_ms,
+        maintenance_mode=app_settings.maintenance_mode,
+        backup_in_progress=server_status.backup_in_progress,
     )
 
 
@@ -831,8 +898,28 @@ async def start_server(request: Request, current_user: User = Depends(require_se
     
     # Record this request
     record_api_request(client_ip)
-    
+
     global server_status
+
+    # Block starts while a backup/restore is writing world folders
+    if server_status.backup_in_progress:
+        operation = server_status.backup_operation or "backup/restore"
+        return PowerResponse(
+            success=False,
+            message=f"Cannot start while {operation} is in progress",
+            state=server_status.state,
+        )
+
+    # Maintenance mode: only admins or whitelisted IPs may start
+    if app_settings.maintenance_mode:
+        admin_ok = current_user.role == UserRole.ADMIN
+        ip_ok = client_ip in (app_settings.maintenance_ips or [])
+        if not (admin_ok or ip_ok):
+            return PowerResponse(
+                success=False,
+                message="Server is in Maintenance Mode - only administrators can start the server",
+                state=server_status.state,
+            )
 
     if server_status.state != ServerState.IDLE:
         return PowerResponse(
@@ -1010,8 +1097,8 @@ async def test_endpoint():
 
 
 @app.get("/settings")
-async def get_settings(current_user: User = require_auth()):
-    """Get current application settings."""
+async def get_settings(current_user: User = Depends(require_permission("change_settings"))):
+    """Get current application settings (admin only — contains config internals)."""
     global app_settings
     from Modules.log_watcher import is_work_hours, calculate_target_power_mode
     from Modules.resource_monitor import get_system_resources
@@ -1034,6 +1121,15 @@ async def get_settings(current_user: User = require_auth()):
         "rcon_enabled": app_settings.rcon_enabled,
         "rcon_port": app_settings.rcon_port,
         "rcon_password_set": bool(app_settings.rcon_password),
+        "maintenance_mode": app_settings.maintenance_mode,
+        "maintenance_ips": app_settings.maintenance_ips,
+        "backup_enabled": app_settings.backup_enabled,
+        "backup_auto_enabled": app_settings.backup_auto_enabled,
+        "backup_duration_hours": app_settings.backup_duration_hours,
+        "backup_duration_days": app_settings.backup_duration_days,
+        "backup_max_count": app_settings.backup_max_count,
+        "backup_auto_delete_enabled": app_settings.backup_auto_delete_enabled,
+        "backup_last_run": app_settings.backup_last_run,
         "ecohost_precision_status": {
             "enabled": app_settings.ecohost_precision_enabled,
             "player_count": player_count,
@@ -1120,10 +1216,50 @@ async def update_settings(
             return {"success": False, "message": "RCON password must be at least 4 characters"}
         app_settings.rcon_password = settings.rcon_password
         logger.info(f"[Settings] RCON password updated")
-    
+
+    if settings.maintenance_mode is not None:
+        app_settings.maintenance_mode = settings.maintenance_mode
+        logger.info(f"[Settings] Maintenance mode: {settings.maintenance_mode}")
+
+    if settings.maintenance_ips is not None:
+        app_settings.maintenance_ips = [str(ip).strip() for ip in settings.maintenance_ips if str(ip).strip()]
+        logger.info(f"[Settings] Maintenance IPs updated: {len(app_settings.maintenance_ips)} entries")
+
+    if settings.backup_enabled is not None:
+        app_settings.backup_enabled = settings.backup_enabled
+        logger.info(f"[Settings] Backup enabled: {settings.backup_enabled}")
+
+    if settings.backup_auto_enabled is not None:
+        app_settings.backup_auto_enabled = settings.backup_auto_enabled
+        logger.info(f"[Settings] Auto-backup: {settings.backup_auto_enabled}")
+
+    if settings.backup_duration_hours is not None:
+        if not (0 <= settings.backup_duration_hours <= 720):
+            return {"success": False, "message": "Backup hours must be 0-720"}
+        app_settings.backup_duration_hours = settings.backup_duration_hours
+
+    if settings.backup_duration_days is not None:
+        if not (0 <= settings.backup_duration_days <= 365):
+            return {"success": False, "message": "Backup days must be 0-365"}
+        app_settings.backup_duration_days = settings.backup_duration_days
+
+    if settings.backup_max_count is not None:
+        if not (1 <= settings.backup_max_count <= 100):
+            return {"success": False, "message": "Backup max count must be 1-100"}
+        app_settings.backup_max_count = settings.backup_max_count
+
+    if settings.backup_auto_delete_enabled is not None:
+        app_settings.backup_auto_delete_enabled = settings.backup_auto_delete_enabled
+
     # Save settings to file
     save_settings_to_file()
-    
+
+    # Any RCON field change invalidates the cached client connection
+    if (settings.rcon_enabled is not None or settings.rcon_port is not None
+            or settings.rcon_password is not None):
+        from Modules.rcon_client import reset_rcon_client
+        reset_rcon_client()
+
     return {"success": True, "message": "Settings updated"}
 
 
@@ -1170,6 +1306,17 @@ async def websocket_endpoint(websocket: WebSocket):
             if mc_config.countdown_active and mc_config.empty_server_countdown:
                 countdown_remaining = max(0, app_settings.auto_shutdown_duration - (time.time() - mc_config.empty_server_countdown))
 
+            # TPS uses the cached RCON path — safe to call every tick
+            tps = None
+            if server_status.state == ServerState.ACTIVE:
+                try:
+                    from Modules.commands import get_server_tps
+                    tps = await get_server_tps()
+                except Exception:
+                    tps = None
+            server_status.tps = tps
+            server_status.avg_tick_ms = (1000.0 / tps) if tps else None
+
             data = {
                 "state": server_status.state.value,
                 "players": [p.username for p in server_status.players],
@@ -1186,6 +1333,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 "countdown_remaining": int(countdown_remaining),
                 "countdown_total": countdown_total,
                 "current_power_mode": app_settings.current_power_mode,
+                "tps": tps,
+                "avg_tick_ms": server_status.avg_tick_ms,
+                "maintenance_mode": app_settings.maintenance_mode,
+                "backup_in_progress": server_status.backup_in_progress,
+                "backup_operation": server_status.backup_operation,
+                "backup_progress": server_status.backup_progress,
+                "backup_status_message": server_status.backup_status_message,
             }
 
             await websocket.send_json(data)
@@ -1220,12 +1374,8 @@ async def public_status():
         "service": "MC-EcoHost",
         "mc_state": server_status.state.value,
         "players_online": len(server_status.players),
-        "players": [p.username for p in server_status.players],
         "mc_uptime_seconds": uptime,
-        "cpu_usage": server_status.cpu_usage,
-        "ram_usage": server_status.ram_usage,
         "power_mode": app_settings.current_power_mode,
-        "server_dir": str(SERVER_DIR),
         "version": APP_VERSION,
     }
 
@@ -1490,6 +1640,211 @@ async def set_player_gamemode(
             data={},
             message=f"Failed to change gamemode: {str(e)}"
         )
+
+
+# =============================================================================
+# Maintenance Mode (admin)
+# =============================================================================
+
+
+@app.post("/settings/maintenance/toggle", response_model=dict)
+async def toggle_maintenance_mode(current_user: User = Depends(require_admin)):
+    """Toggle maintenance mode. During maintenance only admins or
+    whitelisted IPs can start the server."""
+    app_settings.maintenance_mode = not app_settings.maintenance_mode
+    save_settings_to_file()
+    status = "enabled" if app_settings.maintenance_mode else "disabled"
+    logger.info(f"[Settings] Admin '{current_user.username}' {status} maintenance mode")
+    return {
+        "success": True,
+        "maintenance_mode": app_settings.maintenance_mode,
+        "message": f"Maintenance mode {status}",
+    }
+
+
+@app.post("/settings/maintenance/ips", response_model=dict)
+async def update_maintenance_ips(request: MaintenanceIpsRequest, current_user: User = Depends(require_admin)):
+    """Replace the maintenance IP whitelist (admin only)."""
+    ips = [str(ip).strip() for ip in request.ips if str(ip).strip()]
+    app_settings.maintenance_ips = ips
+    save_settings_to_file()
+    logger.info(f"[Settings] Admin '{current_user.username}' updated maintenance IPs: {ips}")
+    return {"success": True, "message": f"Updated {len(ips)} maintenance IPs"}
+
+
+# =============================================================================
+# Emergency Shutdown (admin)
+# =============================================================================
+
+
+@app.post("/emergency-shutdown", response_model=dict)
+async def emergency_shutdown(current_user: User = Depends(require_admin)):
+    """Emergency shutdown: graceful stop first, force-kill OUR java only
+    after a grace period — never touches unrelated java processes."""
+    logger.warning(f"[EmergencyShutdown] '{current_user.username}' initiated emergency shutdown")
+
+    from Modules.commands import execute_command
+    from Modules.server_control import find_mc_java_proc
+
+    mc_config.server_hung = False
+    if server_status.state != ServerState.IDLE:
+        server_status.state = ServerState.STOPPING
+        mc_config.stop_initiated_time = time.time()
+
+    # 1) Graceful stop (RCON or window keystrokes)
+    stopped = await execute_command("stop")
+
+    # 2) Grace period — give java time to flush world data and exit
+    for _ in range(15):
+        if find_mc_java_proc() is None:
+            break
+        await asyncio.sleep(1)
+
+    # 3) Still alive — close our console window, then kill OUR java only
+    proc = find_mc_java_proc()
+    if proc is not None:
+        try:
+            window = console_controller.find_console_window()
+            if window:
+                window.close()
+        except Exception:
+            pass
+        try:
+            logger.warning(f"[EmergencyShutdown] Grace expired - killing java PID {proc.pid}")
+            proc.kill()
+        except Exception as e:
+            logger.error(f"[EmergencyShutdown] Kill failed: {e}")
+            return {"success": False, "message": f"Failed to kill server process: {e}"}
+
+    return {
+        "success": True,
+        "stopped_gracefully": stopped,
+        "message": "Emergency shutdown issued",
+    }
+
+
+# =============================================================================
+# Player Deletion (player_management)
+# =============================================================================
+
+
+@app.delete("/players/{username}", response_model=dict)
+async def delete_player(username: str, current_user: User = Depends(require_player_management)):
+    """Remove a player from the online list and their stored stats."""
+    from Modules.player_sessions import delete_player_stats
+
+    before = len(server_status.players)
+    server_status.players = [p for p in server_status.players if p.username != username]
+    removed_from_online = len(server_status.players) < before
+
+    stats_deleted = delete_player_stats(username)
+
+    if stats_deleted or removed_from_online:
+        logger.info(f"[PlayerManagement] '{current_user.username}' deleted player '{username}'")
+        return {
+            "success": True,
+            "removed_from_online": removed_from_online,
+            "stats_deleted": stats_deleted,
+            "message": f"Player '{username}' removed",
+        }
+    return {"success": False, "message": f"Player '{username}' not found"}
+
+
+# =============================================================================
+# Backups (admin)
+# =============================================================================
+
+
+def _backup_progress(progress: float, message: str) -> None:
+    """Feed backup progress into server_status for the WS broadcast."""
+    server_status.backup_progress = progress
+    server_status.backup_status_message = message
+
+
+@app.get("/backups", response_model=dict)
+async def list_backups_endpoint(current_user: User = Depends(require_admin)):
+    from Modules.backup_manager import list_backups
+    return await asyncio.to_thread(list_backups)
+
+
+@app.post("/backups/create", response_model=dict)
+async def create_backup_endpoint(current_user: User = Depends(require_admin)):
+    if not app_settings.backup_enabled:
+        return {"success": False, "error": "Backups are disabled in settings"}
+    if server_status.backup_in_progress:
+        return {"success": False, "error": "A backup/restore is already running"}
+
+    from Modules.backup_manager import create_backup
+    server_status.backup_in_progress = True
+    server_status.backup_operation = "backup"
+    try:
+        result = await asyncio.to_thread(create_backup, "Manual backup", _backup_progress)
+    finally:
+        server_status.backup_in_progress = False
+        server_status.backup_operation = None
+        server_status.backup_progress = 0.0
+        server_status.backup_status_message = ""
+    return result
+
+
+@app.post("/backups/restore/{backup_id}", response_model=dict)
+async def restore_backup_endpoint(backup_id: str, current_user: User = Depends(require_admin)):
+    from Modules.backup_manager import is_valid_backup_id, restore_backup
+    if not is_valid_backup_id(backup_id):
+        return {"success": False, "error": "Invalid backup id"}
+    if server_status.backup_in_progress:
+        return {"success": False, "error": "A backup/restore is already running"}
+    if server_status.state != ServerState.IDLE:
+        return {"success": False, "error": "Stop the server before restoring a backup"}
+
+    server_status.backup_in_progress = True
+    server_status.backup_operation = "restore"
+    try:
+        result = await asyncio.to_thread(restore_backup, backup_id, _backup_progress)
+    finally:
+        server_status.backup_in_progress = False
+        server_status.backup_operation = None
+        server_status.backup_progress = 0.0
+        server_status.backup_status_message = ""
+    return result
+
+
+@app.delete("/backups/{backup_id}", response_model=dict)
+async def delete_backup_endpoint(backup_id: str, current_user: User = Depends(require_admin)):
+    from Modules.backup_manager import is_valid_backup_id, delete_backup
+    if not is_valid_backup_id(backup_id):
+        return {"success": False, "error": "Invalid backup id"}
+    return await asyncio.to_thread(delete_backup, backup_id)
+
+
+@app.get("/backups/settings", response_model=dict)
+async def get_backup_settings_endpoint(current_user: User = Depends(require_admin)):
+    return {
+        "success": True,
+        "backup_enabled": app_settings.backup_enabled,
+        "backup_auto_enabled": app_settings.backup_auto_enabled,
+        "backup_duration_hours": app_settings.backup_duration_hours,
+        "backup_duration_days": app_settings.backup_duration_days,
+        "backup_max_count": app_settings.backup_max_count,
+        "backup_auto_delete_enabled": app_settings.backup_auto_delete_enabled,
+        "backup_last_run": app_settings.backup_last_run,
+    }
+
+
+@app.put("/backups/settings", response_model=dict)
+async def update_backup_settings_endpoint(request: Request, current_user: User = Depends(require_admin)):
+    body = await request.json()
+    for key in ("backup_enabled", "backup_auto_enabled", "backup_auto_delete_enabled"):
+        if key in body:
+            setattr(app_settings, key, bool(body[key]))
+    for key in ("backup_duration_hours", "backup_duration_days", "backup_max_count"):
+        if key in body:
+            try:
+                setattr(app_settings, key, int(body[key]))
+            except (TypeError, ValueError):
+                return {"success": False, "error": f"Invalid value for {key}"}
+    save_settings_to_file()
+    return {"success": True, "message": "Backup settings updated"}
 
 
 # =============================================================================
