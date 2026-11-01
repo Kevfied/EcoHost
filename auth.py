@@ -120,6 +120,7 @@ PERMISSIONS = {
         "view_players",
         "view_server_logs",
         "view_ecohost_logs",
+        "view_resources",
         "change_settings",
         "user_management",
         "power_mode_control",
@@ -133,21 +134,22 @@ PERMISSIONS = {
         "view_players",
         "view_server_logs",
         "view_ecohost_logs",
+        "view_resources",
         "player_management",
     },
     UserRole.VIEWER_PLUS: {
+        # Start-only power: moderator+ required to stop a running server.
         "server_start",
-        "server_stop",
         "view_dashboard",
         "view_players",
         "view_server_logs",
+        "view_resources",
     },
     UserRole.VIEWER: {
+        # Dashboard only + can start the server. No player data, no
+        # resource graphs, no logs, no stop.
         "server_start",
-        "server_stop",
         "view_dashboard",
-        "view_players",
-        "view_server_logs",
     },
 }
 

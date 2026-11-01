@@ -1368,10 +1368,10 @@
 
         // Role-based permissions
         const rolePermissions = {
-            [userRoles.ADMIN]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'change_settings', 'user_management', 'power_mode_control', 'player_management'],
-            [userRoles.MODERATOR]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'player_management'],
-            [userRoles.VIEWER_PLUS]: ['server_start', 'server_stop', 'view_dashboard', 'view_players', 'view_server_logs'],
-            [userRoles.VIEWER]: ['server_start', 'server_stop', 'view_dashboard', 'view_players', 'view_server_logs']
+            [userRoles.ADMIN]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'view_resources', 'change_settings', 'user_management', 'power_mode_control', 'player_management'],
+            [userRoles.MODERATOR]: ['server_start', 'server_stop', 'console_command', 'view_dashboard', 'view_players', 'view_server_logs', 'view_ecohost_logs', 'view_resources', 'player_management'],
+            [userRoles.VIEWER_PLUS]: ['server_start', 'view_dashboard', 'view_players', 'view_server_logs', 'view_resources'],
+            [userRoles.VIEWER]: ['server_start', 'view_dashboard']
         };
 
         function hasPermission(permission) {
@@ -1466,7 +1466,7 @@
                 const playersNav = document.querySelector('[data-page="players"]');
                 if (playersNav) playersNav.style.display = 'none';
             }
-            if (!hasPermission('view_server_logs')) {  // Using view_server_logs for Resources page too
+            if (!hasPermission('view_resources')) {
                 const resourcesNav = document.querySelector('[data-page="resources"]');
                 if (resourcesNav) resourcesNav.style.display = 'none';
             }

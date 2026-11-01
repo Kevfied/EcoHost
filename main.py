@@ -823,7 +823,7 @@ async def update_user_status(
 # =============================================================================
 
 @app.get("/status", response_model=StatusResponse)
-async def get_status(current_user: User = require_auth()):
+async def get_status(current_user: User = Depends(require_permission("view_dashboard"))):
     """Get current server status including console link state."""
     global server_status
 
@@ -854,7 +854,7 @@ async def get_status(current_user: User = require_auth()):
     # Get network status
     network = get_network_status()
 
-    return StatusResponse(
+    resp = StatusResponse(
         state=server_status.state,
         players=[p.username for p in server_status.players],
         cpu_usage=cpu,
@@ -872,10 +872,18 @@ async def get_status(current_user: User = require_auth()):
         total_uptime=get_total_uptime(),
         session_count=server_uptime_stats.get("session_count", 0),
     )
+    # Roles without the sub-perms still get the dashboard card but not the
+    # data behind it: player names need view_players, cpu/ram need
+    # view_resources. player_count stays — it's on the card itself.
+    if not has_permission(current_user.role, "view_players"):
+        resp.players = []
+    if not has_permission(current_user.role, "view_resources"):
+        resp.cpu_usage = resp.ram_usage = 0.0
+    return resp
 
 
 @app.get("/console/status", response_model=ConsoleStatusResponse)
-async def get_console_status(current_user: User = require_auth()):
+async def get_console_status(current_user: User = Depends(require_permission("console_command"))):
     """Get detailed console window status."""
     window_found = console_controller.is_console_running()
     return ConsoleStatusResponse(
@@ -1345,6 +1353,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 "total_uptime": get_total_uptime(),
                 "session_count": server_uptime_stats.get("session_count", 0),
             }
+            # Same field stripping as /status — viewers get the dashboard
+            # card data, not the player list or resource graphs behind it.
+            if not has_permission(user.role, "view_players"):
+                data["players"] = []
+            if not has_permission(user.role, "view_resources"):
+                data["cpu_usage"] = data["ram_usage"] = 0
 
             await websocket.send_json(data)
             await asyncio.sleep(1)
@@ -1439,7 +1453,7 @@ metrics_thread.start()
 @app.get("/resources/history", response_model=MetricsHistoryResponse)
 async def get_resource_history(
     hours: int = 1,
-    current_user: User = require_auth()
+    current_user: User = Depends(require_permission("view_resources"))
 ):
     """Get resource usage history for the specified hours."""
     try:
@@ -1477,7 +1491,7 @@ async def get_resource_history(
 
 
 @app.get("/players/stats", response_model=PlayerStatsResponse)
-async def get_player_statistics_endpoint(request: Request, current_user: User = require_auth()):
+async def get_player_statistics_endpoint(request: Request, current_user: User = Depends(require_permission("view_players"))):
     """Get all player statistics and history."""
     client_ip = request.client.host if request.client else "unknown"
     
@@ -1547,7 +1561,7 @@ async def get_player_statistics_endpoint(request: Request, current_user: User = 
 
 
 @app.get("/players/{username}/data", response_model=PlayerDataResponse)
-async def get_player_data(username: str, request: Request, current_user: User = require_auth()):
+async def get_player_data(username: str, request: Request, current_user: User = Depends(require_permission("view_players"))):
     """Get detailed player data (inventory, gamemode, health, level, etc.)"""
     client_ip = request.client.host if request.client else "unknown"
     

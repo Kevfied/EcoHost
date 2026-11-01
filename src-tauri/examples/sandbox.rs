@@ -799,24 +799,48 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
             )
             .ok()
         };
+        // Viewer = view_dashboard ONLY. Everything else 403s, and /status
+        // itself strips players + cpu/ram for them.
+        let st_v = get_v("/status")
+            .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok());
         check(
-            "viewer GET /status 200 (extended viewing)",
-            get_v("/status").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+            "viewer GET /status 200 (dashboard card only)",
+            st_v.is_some(),
+        );
+        if let Some(v) = &st_v {
+            check(
+                "viewer /status strips players list",
+                v["players"].as_array().map(|a| a.is_empty()).unwrap_or(false),
+            );
+            check(
+                "viewer /status strips cpu/ram",
+                v["cpu_usage"].as_f64().unwrap_or(1.0) == 0.0
+                    && v["ram_usage"].as_f64().unwrap_or(1.0) == 0.0,
+            );
+        }
+        check(
+            "viewer GET /logs → 403",
+            get_v("/logs").map(|r| r.status().as_u16() == 403).unwrap_or(false),
         );
         check(
-            "viewer GET /logs 200",
-            get_v("/logs").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+            "viewer GET /players/stats → 403",
+            get_v("/players/stats").map(|r| r.status().as_u16() == 403).unwrap_or(false),
         );
         check(
-            "viewer GET /players/stats 200",
-            get_v("/players/stats").map(|r| r.status().as_u16() == 200).unwrap_or(false),
+            "viewer /power/start allowed (start-only power)",
+            post_v("/power/start").map(|r| r.status().as_u16() != 403).unwrap_or(false),
         );
         check(
-            "viewer /power/start allowed (reaches server gate)",
-            post_v("/power/start")
-                .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
-                .map(|v| !v["message"].as_str().unwrap_or("").contains("ermission"))
-                .unwrap_or(false),
+            "viewer /power/stop → 403",
+            post_v("/power/stop").map(|r| r.status().as_u16() == 403).unwrap_or(false),
+        );
+        check(
+            "viewer /resources/history → 403",
+            get_v("/resources/history").map(|r| r.status().as_u16() == 403).unwrap_or(false),
+        );
+        check(
+            "viewer /console/status → 403",
+            get_v("/console/status").map(|r| r.status().as_u16() == 403).unwrap_or(false),
         );
         check(
             "viewer console command → 403",
@@ -956,6 +980,64 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
                 .map(|r| r.status().as_u16() == 200)
                 .unwrap_or(false),
         );
+    }
+
+    // viewer_plus: start allowed, stop forbidden (moderator+ only)
+    let vplus_id = post_a(
+        "/users",
+        json!({"username": "vplus", "password": "VplusPass1", "role": "viewer_plus"}),
+    )
+    .and_then(|r| rt.block_on(async { r.json::<serde_json::Value>().await }).ok())
+    .and_then(|v| v["user"]["id"].as_str().map(String::from));
+    check("admin creates viewer_plus user", vplus_id.is_some());
+    if let Some(id) = &vplus_id {
+        let vc4 = rt
+            .block_on(
+                http.post(format!("{base}/auth/login"))
+                    .json(&json!({"username": "vplus", "password": "VplusPass1"}))
+                    .send(),
+            )
+            .ok()
+            .and_then(|r| {
+                r.headers()
+                    .get("set-cookie")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.split(';').next().unwrap_or("").to_string())
+            });
+        if let Some(vc4) = vc4 {
+            let post_4 = |p: &str| {
+                rt.block_on(
+                    http.post(format!("{base}{p}"))
+                        .header("Cookie", &vc4)
+                        .json(&json!({}))
+                        .send(),
+                )
+                .ok()
+            };
+            check(
+                "viewer_plus /power/start allowed",
+                post_4("/power/start")
+                    .map(|r| r.status().as_u16() != 403)
+                    .unwrap_or(false),
+            );
+            check(
+                "viewer_plus /power/stop → 403",
+                post_4("/power/stop")
+                    .map(|r| r.status().as_u16() == 403)
+                    .unwrap_or(false),
+            );
+            check(
+                "viewer_plus GET /players/stats 200",
+                rt.block_on(
+                    http.get(format!("{base}/players/stats"))
+                        .header("Cookie", &vc4)
+                        .send(),
+                )
+                .map(|r| r.status().as_u16() == 200)
+                .unwrap_or(false),
+            );
+        }
+        let _ = del_a(&format!("/users/{id}"));
     }
 
     // player data + management
@@ -1104,7 +1186,8 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
             .unwrap_or(false),
         );
 
-        // maintenance IP whitelist — real check, not the dead old list
+        // maintenance IP whitelist — vc2 is sandboxview (moderator here):
+        // a non-admin with server_start, i.e. subject to the whitelist
         let post_v2 = |p: &str| {
             rt.block_on(
                 http.post(format!("{base}{p}"))
@@ -1118,7 +1201,7 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
         post_a("/settings/maintenance/ips", json!({"ips": []}));
         post_a("/settings/maintenance/toggle", json!({}));
         check(
-            "maintenance on + no whitelist → viewer start blocked",
+            "maintenance on + no whitelist → non-admin start blocked",
             post_v2("/power/start")
                 .map(|v| {
                     v["message"].as_str().unwrap_or("").contains("Maintenance")
@@ -1128,7 +1211,7 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
         );
         post_a("/settings/maintenance/ips", json!({"ips": ["127.0.0.1"]}));
         check(
-            "whitelisted 127.0.0.1 → viewer start passes maintenance",
+            "whitelisted 127.0.0.1 → non-admin start passes maintenance",
             post_v2("/power/start")
                 .map(|v| !v["message"].as_str().unwrap_or("").contains("Maintenance"))
                 .unwrap_or(false),
@@ -1248,14 +1331,14 @@ fn test_backend_full(rt: &tokio::runtime::Runtime) {
             .unwrap_or(false),
         );
         check(
-            "viewer /power/stop allowed",
+            "viewer /power/stop → 403",
             rt.block_on(
                 http.post(format!("{base}/power/stop"))
                     .header("Cookie", &vc3)
                     .json(&json!({}))
                     .send(),
             )
-            .map(|r| r.status().as_u16() != 403)
+            .map(|r| r.status().as_u16() == 403)
             .unwrap_or(false),
         );
     }
